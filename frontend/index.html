@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Corporate Filing Analyzer | Analyst Workbench</title>
+  <meta name="description" content="Analyst workbench for corporate filings. Attach a 10-K with your question, watch the LangGraph route it to a specialist node, and approve the route before analysis runs." />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="workbench">
+    <!-- ══ DOCK (left) ═══════════════════════════════════════════════ -->
+    <aside class="dock" id="dock">
+      <div class="dock-brand">
+        <div class="mark">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+          </svg>
+        </div>
+        <div class="mark-text">
+          <strong>FILING ANALYZER</strong>
+          <span>analyst workbench</span>
+        </div>
+        <button class="x-btn dock-close" id="dockClose" aria-label="Close panel">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="dock-scroll">
+        <!-- Filings -->
+        <section class="panel">
+          <div class="panel-label">
+            <span>Filings</span>
+            <span class="tally" id="fileCountBadge">00</span>
+          </div>
+
+          <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Add filing">
+            <input type="file" id="fileInput" accept=".pdf,.txt,.md,.csv" multiple hidden />
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" /><line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" />
+            </svg>
+            <span class="dz-text">Add filing<em>pdf · txt · md · csv</em></span>
+          </div>
+
+          <div class="filing-list" id="uploadedFilesList"></div>
+        </section>
+
+        <!-- Direct node entry -->
+        <section class="panel">
+          <div class="panel-label">
+            <span>Direct to node</span>
+            <span class="tally alt">skip router</span>
+          </div>
+          <div class="node-rows" id="nodeList">
+            <button class="node-row" data-category="financials" data-tone="jade" data-query="Extract key financial metrics including revenue, profit, margins, and YoY growth.">
+              <span class="nr-key"></span><span class="nr-name">Financials</span><span class="nr-desc">revenue · margins</span>
+            </button>
+            <button class="node-row" data-category="compliance" data-tone="blue" data-query="Identify compliance issues, auditor opinions, and internal control disclosures.">
+              <span class="nr-key"></span><span class="nr-name">Compliance</span><span class="nr-desc">opinion · SOX</span>
+            </button>
+            <button class="node-row" data-category="risks" data-tone="rose" data-query="List and categorize all Item 1A risk factors and operational vulnerabilities.">
+              <span class="nr-key"></span><span class="nr-name">Risks</span><span class="nr-desc">item 1A</span>
+            </button>
+            <button class="node-row" data-category="shareholding" data-tone="violet" data-query="Summarize the shareholding pattern and ownership structure.">
+              <span class="nr-key"></span><span class="nr-name">Shareholding</span><span class="nr-desc">ownership</span>
+            </button>
+            <button class="node-row" data-category="governance" data-tone="cyan" data-query="Summarize board composition, committees, and executive compensation.">
+              <span class="nr-key"></span><span class="nr-name">Governance</span><span class="nr-desc">board · pay</span>
+            </button>
+            <button class="node-row" data-category="mda" data-tone="gold" data-query="Summarize the Management Discussion and Analysis (MD&amp;A) section.">
+              <span class="nr-key"></span><span class="nr-name">MD&amp;A</span><span class="nr-desc">outlook</span>
+            </button>
+            <button class="node-row" data-category="summary" data-tone="amber" data-query="Provide an executive summary of this corporate filing.">
+              <span class="nr-key"></span><span class="nr-name">Summary</span><span class="nr-desc">briefing</span>
+            </button>
+            <button class="node-row" data-category="qa" data-tone="slate" data-query="">
+              <span class="nr-key"></span><span class="nr-name">Q&amp;A</span><span class="nr-desc">open question</span>
+            </button>
+          </div>
+        </section>
+      </div>
+
+      <div class="dock-foot">
+        <span class="link-dot" id="serverPulseDot"></span>
+        <span class="foot-status" id="serverStatusText">linking…</span>
+        <span class="foot-model" id="modelTag">llama3.1</span>
+      </div>
+    </aside>
+
+    <div class="scrim" id="scrim"></div>
+
+    <!-- ══ STAGE (center) ════════════════════════════════════════════ -->
+    <main class="stage">
+      <header class="stage-head">
+        <div class="sh-left">
+          <button class="x-btn" id="dockToggle" aria-label="Toggle panel">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+              <line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="18" x2="21" y2="18" />
+            </svg>
+          </button>
+          <div class="dossier">
+            <span class="dossier-id" id="sessionId">DOSSIER —</span>
+            <span class="dossier-mode" id="sessionSub">auto-route · approval on</span>
+          </div>
+        </div>
+
+        <div class="sh-right">
+          <label class="gate" id="approvalSwitch" title="Pause the run on the router's decision">
+            <input type="checkbox" id="approvalToggle" checked />
+            <span class="gate-box"><span class="gate-fill"></span></span>
+            <span class="gate-text">approval gate</span>
+          </label>
+          <button class="x-btn" id="inspectorToggle" title="Toggle graph panel" aria-label="Toggle graph panel">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="5" r="2.4" /><circle cx="6" cy="19" r="2.4" /><circle cx="18" cy="19" r="2.4" />
+              <path d="M12 7.4v4.2M12 11.6 6.8 16.6M12 11.6l5.2 5" />
+            </svg>
+          </button>
+          <button class="x-btn" id="clearChatBtn" title="Clear ledger" aria-label="Clear ledger">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="3 6 5 6 21 6" />
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+            </svg>
+          </button>
+          <button class="x-btn primary" id="newChatBtn" title="New dossier">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+              <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            <span>New</span>
+          </button>
+        </div>
+      </header>
+
+      <div class="ledger" id="chatContainer">
+        <div class="ledger-inner">
+          <!-- Opening card -->
+          <section class="opening" id="welcomeHero">
+            <div class="opening-rule"><span>00</span><i></i><span>SESSION OPEN</span></div>
+            <h1>Interrogate a corporate filing,<br /><em>one routed question at a time.</em></h1>
+            <p>
+              Attach a 10-K, 10-Q, 8-K or annual report and send it with your question.
+              The graph retrieves the passages that matter, a router picks the specialist
+              node — and holds at the gate until you approve the call.
+            </p>
+
+            <div class="opening-grid">
+              <button class="op-card" data-category="auto" data-query="What was total revenue and net profit, and how did margins move year over year?">
+                <span class="op-tag">auto-route</span>
+                <strong>Revenue &amp; margin movement</strong>
+                <em>let the router classify it</em>
+              </button>
+              <button class="op-card" data-category="risks" data-tone="rose" data-query="List and categorize all Item 1A risk factors by severity.">
+                <span class="op-tag">→ risks</span>
+                <strong>Item 1A risk register</strong>
+                <em>straight to the risks node</em>
+              </button>
+              <button class="op-card" data-category="compliance" data-tone="blue" data-query="What is the auditor's opinion and were any material weaknesses disclosed?">
+                <span class="op-tag">→ compliance</span>
+                <strong>Auditor opinion &amp; controls</strong>
+                <em>straight to the compliance node</em>
+              </button>
+              <button class="op-card" data-category="summary" data-tone="amber" data-query="Give me an executive briefing on this filing.">
+                <span class="op-tag">→ summary</span>
+                <strong>Executive briefing</strong>
+                <em>straight to the summary node</em>
+              </button>
+            </div>
+          </section>
+
+          <div class="runs" id="messagesList"></div>
+        </div>
+      </div>
+
+      <!-- Command bar -->
+      <div class="command-wrap">
+        <div class="command" id="composer">
+          <div class="cmd-tray" id="attachTray" hidden></div>
+
+          <div class="cmd-line">
+            <span class="cmd-caret">▸</span>
+            <textarea id="userInput" rows="1" placeholder="State the question. Attach the filing."></textarea>
+            <button class="cmd-clip" id="attachBtn" title="Attach filing" aria-label="Attach filing">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+              </svg>
+            </button>
+            <button class="cmd-run" id="sendBtn" title="Run (Enter)">
+              <span>RUN</span>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+            </button>
+          </div>
+
+          <div class="cmd-foot">
+            <div class="picker-wrap">
+              <button class="picker" id="routePickerBtn" aria-haspopup="listbox" aria-expanded="false">
+                <span class="picker-key">route</span>
+                <span class="picker-val" id="routePickerLabel">auto</span>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+              <div class="picker-menu" id="routeMenu" role="listbox" hidden></div>
+            </div>
+            <span class="cmd-hint"><kbd>↵</kbd> run · <kbd>⇧↵</kbd> newline · <kbd>⌘K</kbd> route</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ══ INSPECTOR (right) ═════════════════════════════════════════ -->
+    <aside class="inspector" id="inspector">
+      <div class="insp-block">
+        <div class="panel-label"><span>Graph</span><span class="tally alt" id="graphState">idle</span></div>
+
+        <div class="map" id="graphMap">
+          <div class="map-node" data-node="retrieve" data-state="idle">
+            <i class="mn-dot"></i><span class="mn-name">retrieve</span><span class="mn-meta">chroma</span>
+          </div>
+          <div class="map-wire"></div>
+          <div class="map-node" data-node="router" data-state="idle">
+            <i class="mn-dot"></i><span class="mn-name">router</span><span class="mn-meta">llm</span>
+          </div>
+          <div class="map-wire"></div>
+          <div class="map-node gate-node" data-node="approval" data-state="idle">
+            <i class="mn-dot"></i><span class="mn-name">approval</span><span class="mn-meta">interrupt</span>
+          </div>
+          <div class="map-fan">
+            <div class="map-leaf" data-node="financials" data-tone="jade"><i></i>financials</div>
+            <div class="map-leaf" data-node="compliance" data-tone="blue"><i></i>compliance</div>
+            <div class="map-leaf" data-node="risks" data-tone="rose"><i></i>risks</div>
+            <div class="map-leaf" data-node="shareholding" data-tone="violet"><i></i>shareholding</div>
+            <div class="map-leaf" data-node="governance" data-tone="cyan"><i></i>governance</div>
+            <div class="map-leaf" data-node="mda" data-tone="gold"><i></i>mda</div>
+            <div class="map-leaf" data-node="summary" data-tone="amber"><i></i>summary</div>
+            <div class="map-leaf" data-node="qa" data-tone="slate"><i></i>qa</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="insp-block grow">
+        <div class="panel-label"><span>Retrieved context</span><span class="tally" id="sourceCount">00</span></div>
+        <div class="insp-sources" id="inspSources">
+          <p class="insp-empty">Passages pulled for the active run land here.</p>
+        </div>
+      </div>
+
+      <div class="insp-block">
+        <div class="panel-label"><span>Session</span></div>
+        <dl class="readout">
+          <div><dt>runs</dt><dd id="statRuns">0</dd></div>
+          <div><dt>filings</dt><dd id="statFilings">0</dd></div>
+          <div><dt>chunks</dt><dd id="statChunks">0</dd></div>
+        </dl>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Drop target -->
+  <div class="drop-veil" id="dragOverlay">
+    <div class="veil-frame">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" />
+      </svg>
+      <strong>Release to stage the filing</strong>
+      <span>it ships with your next question</span>
+    </div>
+  </div>
+
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="socket.io.min.js"></script>
+  <script src="marked.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

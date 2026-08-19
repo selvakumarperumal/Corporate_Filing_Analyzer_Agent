@@ -1,0 +1,37 @@
+Company: Apex Financial Holdings Inc.
+Filing Type: Form 10-K (Annual Report)
+Fiscal Year: FY2024 (Ended December 31, 2024)
+Sector: Financial Services & Banking
+
+Item 1. Business Overview
+Apex Financial Holdings Inc. is a leading provider of diversified financial services, commercial lending, asset management, and digital banking solutions across North America.
+
+Item 7. Management's Discussion and Analysis of Financial Condition and Results of Operations (MD&A)
+Financial Highlights for Fiscal Year 2024:
+- Total Net Revenue: $4,850,000,000 (an increase of 14.2% YoY from $4,247,000,000 in FY2023)
+- Net Income: $820,000,000 compared to $710,000,000 in FY2023 (15.5% growth)
+- Diluted Earnings Per Share (EPS): $5.42 compared to $4.70 in FY2023
+- Operating Margin: 24.8%
+- EBITDA: $1,250,000,000
+- Total Assets: $38,500,000,000
+- Total Liabilities: $29,200,000,000
+- Total Debt: $6,400,000,000
+- Cash and Cash Equivalents: $3,100,000,000
+
+Item 1A. Risk Factors
+1. Credit and Interest Rate Risk: Adverse fluctuations in macroeconomic interest rates could increase default rates in commercial loan portfolios and compress net interest margins.
+2. Cybersecurity and Technology Disruption: Distributed Denial of Service (DDoS) attacks, ransomware, or unauthorized system access could compromise customer data and result in substantial financial penalties and reputational harm (Severity: High).
+3. Regulatory and Capital Adequacy Risks: Stricter capital reserve mandates under Basel III/IV reforms could limit dividend distributions and capital deployment strategies.
+
+Item 8. Independent Auditor's Report
+To the Shareholders and Board of Directors of Apex Financial Holdings Inc.:
+Opinion on the Financial Statements:
+In our opinion, the accompanying consolidated financial statements present fairly, in all material respects, the financial position of Apex Financial Holdings Inc. as of December 31, 2024 and 2023, in conformity with U.S. GAAP (Unqualified Opinion).
+Critical Audit Matters (CAM):
+- Valuation of Allowance for Credit Losses on Commercial Real Estate Portfolio.
+- Measurement of Goodwill and Intangible Assets in the Digital Banking Segment.
+
+Item 12. Security Ownership of Certain Beneficial Owners and Management
+- Institutional Investors: 62.5% (Vanguard Group: 11.2%, BlackRock: 9.8%, State Street: 5.4%)
+- Executive Officers and Directors (Insiders): 8.5%
+- Public and Retail Shareholders: 29.0%
