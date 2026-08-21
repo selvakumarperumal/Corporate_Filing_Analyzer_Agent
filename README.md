@@ -6,6 +6,10 @@ Dossiers persist. Every question and answer is a row, every filing stays in its
 dossier's collection, and signing in resumes the work rather than starting it
 over — see [Conversation history](#conversation-history).
 
+For a walkthrough of what the app actually does — what happens when you click
+"New dossier", how history is retrieved and trimmed, how a run travels from the
+browser to the graph and back — see **[docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md)**.
+
 ---
 
 ## Architecture
@@ -99,6 +103,8 @@ reintroduce a human-in-the-loop interrupt.
 Corporate_Filing_Analyzer_Agent/
 ├── docker-compose.yml          # Workbench + API + Postgres + Redis
 ├── .env.example                # Settings compose reads; copy to .env
+├── docs/
+│   └── HOW-IT-WORKS.md         # Walkthrough of every flow, from sign-in to summarisation
 ├── deploy/
 │   └── cnpg-cluster.yaml       # The same database as a CloudNativePG Cluster (Kubernetes)
 ├── backend/
