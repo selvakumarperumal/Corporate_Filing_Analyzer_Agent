@@ -1,0 +1,1413 @@
+2026-08-19 21:56:17 | INFO     | prompts.templates | _load_prompts:31 | Loaded 9 prompts from prompts.yaml
+2026-08-19 21:56:18 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-19 21:56:18 | INFO     | services.vector_service | __init__:45 | VectorService ready (collection=corporate_filings, persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-19 21:56:18 | INFO     | services.router_service | __init__:21 | RouterService ready (8 categories)
+2026-08-19 21:56:18 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-19 21:56:18 | INFO     | graph.builder | build_graph:64 | Filing graph compiled with 8 analysis nodes
+2026-08-19 21:56:18 | INFO     | services.chat_service | __init__:42 | ChatService ready
+2026-08-19 21:56:18 | INFO     | main | <module>:92 | Backend ready — HTTP + Socket.IO mounted
+2026-08-19 21:57:27 | INFO     | prompts.templates | _load_prompts:31 | Loaded 9 prompts from prompts.yaml
+2026-08-19 21:57:27 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-19 21:57:28 | INFO     | services.vector_service | __init__:45 | VectorService ready (collection=corporate_filings, persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-19 21:57:28 | INFO     | services.router_service | __init__:21 | RouterService ready (8 categories)
+2026-08-19 21:57:28 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-19 21:57:28 | INFO     | graph.builder | build_graph:64 | Filing graph compiled with 8 analysis nodes
+2026-08-19 21:57:28 | INFO     | services.chat_service | __init__:42 | ChatService ready
+2026-08-19 21:57:28 | INFO     | main | <module>:92 | Backend ready — HTTP + Socket.IO mounted
+2026-08-19 21:57:50 | DEBUG    | services.vector_service | ingest_file:65 | Ingesting mock_10k_filing.txt (2417 bytes, session=test-session)
+2026-08-19 21:57:51 | INFO     | services.vector_service | ingest_file:88 | Ingested mock_10k_filing.txt -> 3 chunks (session=test-session)
+2026-08-19 21:57:51 | INFO     | main | upload_file:83 | Uploaded mock_10k_filing.txt -> 3 chunks
+2026-08-19 21:57:51 | DEBUG    | services.vector_service | ingest_file:65 | Ingesting bad.xyz (2 bytes, session=test-session)
+2026-08-19 21:57:51 | WARNING  | main | upload_file:80 | Upload rejected (bad.xyz): Unsupported file type '.xyz'. Supported: .pdf, .txt, .md, .csv
+2026-08-19 21:58:24 | INFO     | api.socket_handler | connect:24 | Client connected: TpS8PJ4XLa6dV9BfAAAB
+2026-08-19 21:58:24 | INFO     | api.socket_handler | query:42 | Query from TpS8PJ4XLa6dV9BfAAAB: 'What are the main risk factors in this filing?'
+2026-08-19 21:58:24 | INFO     | services.chat_service | query_stream:76 | Run bd787b34c0e148b5b473f3060beb4593 started: 'What are the main risk factors in this filing?' (session=test-session)
+2026-08-19 21:58:24 | INFO     | services.vector_service | search:114 | Retrieved 3 chunk(s) for 'What are the main risk factors in this filing?' (session_scoped=True)
+2026-08-19 21:58:24 | DEBUG    | graph.nodes | retrieve:72 | Retrieved 2416 chars of context from 3 chunk(s)
+2026-08-19 21:58:24 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 21:58:30 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 16 characters
+2026-08-19 21:58:30 | INFO     | services.router_service | classify:42 | Routed 'What are the main risk factors in this filing?' -> risks
+2026-08-19 21:58:30 | DEBUG    | services.router_service | classify:43 | Router raw reply: 'assistant\n\nrisks'
+2026-08-19 21:58:30 | INFO     | graph.nodes | node:93 | Running Risk Factors analysis
+2026-08-19 21:58:30 | DEBUG    | services.analysis_service | analyze:27 | Analyzing category=risks (context=2416 chars, query='What are the main risk factors in this filing?')
+2026-08-19 21:58:30 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 2 message(s)
+2026-08-19 21:58:42 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 3569 characters
+2026-08-19 21:58:42 | INFO     | services.analysis_service | analyze:34 | Analysis complete: category=risks, answer=3569 chars
+2026-08-19 21:58:42 | INFO     | services.chat_service | query_stream:103 | Run bd787b34c0e148b5b473f3060beb4593 finished (category=risks)
+2026-08-19 21:58:42 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: TpS8PJ4XLa6dV9BfAAAB
+2026-08-19 22:02:20 | INFO     | prompts.templates | _load_prompts:31 | Loaded 9 prompts from prompts.yaml
+2026-08-19 22:02:20 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-19 22:02:20 | INFO     | services.vector_service | __init__:45 | VectorService ready (collection=corporate_filings, persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-19 22:02:20 | INFO     | services.router_service | __init__:21 | RouterService ready (8 categories)
+2026-08-19 22:02:20 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-19 22:02:20 | INFO     | graph.builder | build_graph:64 | Filing graph compiled with 8 analysis nodes
+2026-08-19 22:02:20 | INFO     | services.chat_service | __init__:42 | ChatService ready
+2026-08-19 22:02:20 | INFO     | main | <module>:92 | Backend ready — HTTP + Socket.IO mounted
+2026-08-19 22:28:33 | INFO     | prompts.templates | _load_prompts:31 | Loaded 9 prompts from prompts.yaml
+2026-08-19 22:28:33 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-19 22:28:33 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-19 22:28:33 | INFO     | services.router_service | __init__:21 | RouterService ready (8 categories)
+2026-08-19 22:28:33 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-19 22:28:33 | INFO     | graph.builder | build_graph:64 | Filing graph compiled with 8 analysis nodes
+2026-08-19 22:28:33 | INFO     | services.chat_service | __init__:42 | ChatService ready
+2026-08-19 22:28:33 | INFO     | main | <module>:108 | Backend ready — HTTP + Socket.IO mounted
+2026-08-19 22:28:43 | INFO     | prompts.templates | _load_prompts:31 | Loaded 9 prompts from prompts.yaml
+2026-08-19 22:28:43 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-19 22:28:43 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-19 22:28:43 | INFO     | services.router_service | __init__:21 | RouterService ready (8 categories)
+2026-08-19 22:28:43 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-19 22:28:43 | INFO     | graph.builder | build_graph:64 | Filing graph compiled with 8 analysis nodes
+2026-08-19 22:28:43 | INFO     | services.chat_service | __init__:42 | ChatService ready
+2026-08-19 22:28:43 | INFO     | main | <module>:108 | Backend ready — HTTP + Socket.IO mounted
+2026-08-19 22:45:39 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting apex_10k.txt (2417 bytes) into chat chat-A
+2026-08-19 22:45:39 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat chat-A
+2026-08-19 22:45:40 | INFO     | services.vector_service | ingest_file:90 | Ingested apex_10k.txt -> 3 chunks (chat=chat-A)
+2026-08-19 22:45:40 | INFO     | main | upload_file:89 | Uploaded apex_10k.txt -> 3 chunks
+2026-08-19 22:45:40 | INFO     | api.socket_handler | connect:24 | Client connected: 12zqEl1ao_PN2SbwAAAB
+2026-08-19 22:45:40 | INFO     | api.socket_handler | query:42 | Query from 12zqEl1ao_PN2SbwAAAB (chat=chat-A): 'What was total revenue and net income for Apex Financial Holdings?'
+2026-08-19 22:45:40 | INFO     | services.chat_service | query_stream:80 | Run cbcf55cb31334b5bbd963bc7493f6330 started: 'What was total revenue and net income for Apex Financial Holdings?' (session=chat-A)
+2026-08-19 22:45:40 | INFO     | services.vector_service | search:104 | Retrieved 3 chunk(s) for 'What was total revenue and net income for Apex Fin' (chat=chat-A)
+2026-08-19 22:45:40 | DEBUG    | graph.nodes | retrieve:64 | Retrieved 2416 chars of context from 3 chunk(s)
+2026-08-19 22:45:40 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 22:45:44 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 21 characters
+2026-08-19 22:45:44 | INFO     | services.router_service | classify:42 | Routed 'What was total revenue and net income for Apex Financial Hol' -> financials
+2026-08-19 22:45:44 | DEBUG    | services.router_service | classify:43 | Router raw reply: 'assistant\n\nfinancials'
+2026-08-19 22:45:44 | INFO     | graph.nodes | node:85 | Running Financials analysis
+2026-08-19 22:45:44 | DEBUG    | services.analysis_service | analyze:27 | Analyzing category=financials (context=2416 chars, query='What was total revenue and net income for Apex Financial Hol')
+2026-08-19 22:45:44 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 2 message(s)
+2026-08-19 22:45:54 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 1981 characters
+2026-08-19 22:45:54 | INFO     | services.analysis_service | analyze:34 | Analysis complete: category=financials, answer=1981 chars
+2026-08-19 22:45:54 | INFO     | services.chat_service | query_stream:107 | Run cbcf55cb31334b5bbd963bc7493f6330 finished (category=financials)
+2026-08-19 22:45:54 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: 12zqEl1ao_PN2SbwAAAB
+2026-08-19 22:45:54 | INFO     | api.socket_handler | connect:24 | Client connected: HHVf1s0q0fok4WXbAAAD
+2026-08-19 22:45:54 | INFO     | api.socket_handler | query:42 | Query from HHVf1s0q0fok4WXbAAAD (chat=chat-B): 'What was total revenue and net income for Apex Financial Holdings?'
+2026-08-19 22:45:54 | INFO     | services.chat_service | query_stream:80 | Run b96d862c1f544e058871e4a5ed82fd4a started: 'What was total revenue and net income for Apex Financial Holdings?' (session=chat-B)
+2026-08-19 22:45:54 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat chat-B
+2026-08-19 22:45:54 | INFO     | services.vector_service | search:104 | Retrieved 0 chunk(s) for 'What was total revenue and net income for Apex Fin' (chat=chat-B)
+2026-08-19 22:45:54 | INFO     | graph.nodes | retrieve:63 | No filing indexed for this chat — answering without context
+2026-08-19 22:45:54 | DEBUG    | graph.nodes | retrieve:64 | Retrieved 0 chars of context from 0 chunk(s)
+2026-08-19 22:45:54 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 22:45:55 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 21 characters
+2026-08-19 22:45:55 | INFO     | services.router_service | classify:42 | Routed 'What was total revenue and net income for Apex Financial Hol' -> financials
+2026-08-19 22:45:55 | DEBUG    | services.router_service | classify:43 | Router raw reply: 'assistant\n\nfinancials'
+2026-08-19 22:45:55 | INFO     | graph.nodes | node:85 | Running Financials analysis
+2026-08-19 22:45:55 | DEBUG    | services.analysis_service | analyze:27 | Analyzing category=financials (context=0 chars, query='What was total revenue and net income for Apex Financial Hol')
+2026-08-19 22:45:55 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 2 message(s)
+2026-08-19 22:46:02 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 1613 characters
+2026-08-19 22:46:02 | INFO     | services.analysis_service | analyze:34 | Analysis complete: category=financials, answer=1613 chars
+2026-08-19 22:46:02 | INFO     | services.chat_service | query_stream:107 | Run b96d862c1f544e058871e4a5ed82fd4a finished (category=financials)
+2026-08-19 22:46:02 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: HHVf1s0q0fok4WXbAAAD
+2026-08-19 22:46:03 | INFO     | services.vector_service | delete_session:118 | Deleted filings for chat chat-A
+2026-08-19 22:46:03 | INFO     | api.socket_handler | connect:24 | Client connected: 7pcuCaqom6zE0dZkAAAF
+2026-08-19 22:46:03 | INFO     | api.socket_handler | query:42 | Query from 7pcuCaqom6zE0dZkAAAF (chat=chat-A): 'What was total revenue and net income for Apex Financial Holdings?'
+2026-08-19 22:46:03 | INFO     | services.chat_service | query_stream:80 | Run a36d551be08147a6919c6d52a27f8d4a started: 'What was total revenue and net income for Apex Financial Holdings?' (session=chat-A)
+2026-08-19 22:46:03 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat chat-A
+2026-08-19 22:46:03 | INFO     | services.vector_service | search:104 | Retrieved 0 chunk(s) for 'What was total revenue and net income for Apex Fin' (chat=chat-A)
+2026-08-19 22:46:03 | INFO     | graph.nodes | retrieve:63 | No filing indexed for this chat — answering without context
+2026-08-19 22:46:03 | DEBUG    | graph.nodes | retrieve:64 | Retrieved 0 chars of context from 0 chunk(s)
+2026-08-19 22:46:03 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 22:46:03 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 21 characters
+2026-08-19 22:46:03 | INFO     | services.router_service | classify:42 | Routed 'What was total revenue and net income for Apex Financial Hol' -> financials
+2026-08-19 22:46:03 | DEBUG    | services.router_service | classify:43 | Router raw reply: 'assistant\n\nfinancials'
+2026-08-19 22:46:03 | INFO     | graph.nodes | node:85 | Running Financials analysis
+2026-08-19 22:46:03 | DEBUG    | services.analysis_service | analyze:27 | Analyzing category=financials (context=0 chars, query='What was total revenue and net income for Apex Financial Hol')
+2026-08-19 22:46:03 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 2 message(s)
+2026-08-19 22:46:11 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 1608 characters
+2026-08-19 22:46:11 | INFO     | services.analysis_service | analyze:34 | Analysis complete: category=financials, answer=1608 chars
+2026-08-19 22:46:11 | INFO     | services.chat_service | query_stream:107 | Run a36d551be08147a6919c6d52a27f8d4a finished (category=financials)
+2026-08-19 22:46:11 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: 7pcuCaqom6zE0dZkAAAF
+2026-08-19 22:46:11 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat never-existed
+2026-08-19 22:47:46 | INFO     | prompts.templates | _load_prompts:31 | Loaded 9 prompts from prompts.yaml
+2026-08-19 22:47:47 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-19 22:47:47 | INFO     | services.vector_service | _drop_stale_collections:155 | Cleared 2 orphaned chat collection(s) from disk
+2026-08-19 22:47:47 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-19 22:47:47 | INFO     | services.router_service | __init__:21 | RouterService ready (8 categories)
+2026-08-19 22:47:47 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-19 22:47:47 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-19 22:47:47 | INFO     | services.chat_service | __init__:42 | ChatService ready
+2026-08-19 22:47:47 | INFO     | main | <module>:108 | Backend ready — HTTP + Socket.IO mounted
+2026-08-19 22:47:57 | INFO     | prompts.templates | _load_prompts:31 | Loaded 9 prompts from prompts.yaml
+2026-08-19 22:47:57 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-19 22:47:57 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-19 22:47:57 | INFO     | services.router_service | __init__:21 | RouterService ready (8 categories)
+2026-08-19 22:47:57 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-19 22:47:57 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-19 22:47:57 | INFO     | services.chat_service | __init__:42 | ChatService ready
+2026-08-19 22:47:57 | INFO     | main | <module>:108 | Backend ready — HTTP + Socket.IO mounted
+2026-08-19 22:48:05 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting apex_10k.txt (2417 bytes) into chat chat-A
+2026-08-19 22:48:05 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat chat-A
+2026-08-19 22:48:05 | INFO     | services.vector_service | ingest_file:90 | Ingested apex_10k.txt -> 3 chunks (chat=chat-A)
+2026-08-19 22:48:05 | INFO     | main | upload_file:89 | Uploaded apex_10k.txt -> 3 chunks
+2026-08-19 22:48:05 | INFO     | api.socket_handler | connect:24 | Client connected: a-COUOXgLDqbWSiaAAAB
+2026-08-19 22:48:05 | INFO     | api.socket_handler | query:42 | Query from a-COUOXgLDqbWSiaAAAB (chat=chat-A): 'What was total revenue and net income for Apex Financial Holdings?'
+2026-08-19 22:48:05 | INFO     | services.chat_service | query_stream:80 | Run 2d39823e60b942f2a0fdc1b44d9a156c started: 'What was total revenue and net income for Apex Financial Holdings?' (session=chat-A)
+2026-08-19 22:48:06 | INFO     | services.vector_service | search:104 | Retrieved 3 chunk(s) for 'What was total revenue and net income for Apex Fin' (chat=chat-A)
+2026-08-19 22:48:06 | DEBUG    | graph.nodes | retrieve:68 | Retrieved 2416 chars of context from 3 chunk(s)
+2026-08-19 22:48:06 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 22:48:06 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 21 characters
+2026-08-19 22:48:06 | INFO     | services.router_service | classify:42 | Routed 'What was total revenue and net income for Apex Financial Hol' -> financials
+2026-08-19 22:48:06 | DEBUG    | services.router_service | classify:43 | Router raw reply: 'assistant\n\nfinancials'
+2026-08-19 22:48:06 | INFO     | graph.nodes | node:99 | Running Financials analysis
+2026-08-19 22:48:06 | DEBUG    | services.analysis_service | analyze:27 | Analyzing category=financials (context=2416 chars, query='What was total revenue and net income for Apex Financial Hol')
+2026-08-19 22:48:06 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 2 message(s)
+2026-08-19 22:48:16 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 2185 characters
+2026-08-19 22:48:16 | INFO     | services.analysis_service | analyze:34 | Analysis complete: category=financials, answer=2185 chars
+2026-08-19 22:48:16 | INFO     | services.chat_service | query_stream:107 | Run 2d39823e60b942f2a0fdc1b44d9a156c finished (category=financials)
+2026-08-19 22:48:16 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: a-COUOXgLDqbWSiaAAAB
+2026-08-19 22:48:16 | INFO     | api.socket_handler | connect:24 | Client connected: DVS9hsSzqb5drI0LAAAD
+2026-08-19 22:48:16 | INFO     | api.socket_handler | query:42 | Query from DVS9hsSzqb5drI0LAAAD (chat=chat-B): 'What was total revenue and net income for Apex Financial Holdings?'
+2026-08-19 22:48:16 | INFO     | services.chat_service | query_stream:80 | Run 3f9e3f4e778147a18c418b199bae9e29 started: 'What was total revenue and net income for Apex Financial Holdings?' (session=chat-B)
+2026-08-19 22:48:16 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat chat-B
+2026-08-19 22:48:16 | INFO     | services.vector_service | search:104 | Retrieved 0 chunk(s) for 'What was total revenue and net income for Apex Fin' (chat=chat-B)
+2026-08-19 22:48:16 | DEBUG    | graph.nodes | retrieve:68 | Retrieved 0 chars of context from 0 chunk(s)
+2026-08-19 22:48:16 | INFO     | graph.nodes | no_filing:77 | No filing in this chat — asking for one instead of answering
+2026-08-19 22:48:16 | INFO     | services.chat_service | query_stream:107 | Run 3f9e3f4e778147a18c418b199bae9e29 finished (category=qa)
+2026-08-19 22:48:16 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: DVS9hsSzqb5drI0LAAAD
+2026-08-19 22:48:16 | INFO     | services.vector_service | delete_session:118 | Deleted filings for chat chat-A
+2026-08-19 22:48:16 | INFO     | api.socket_handler | connect:24 | Client connected: DmY1Q0oV0kCgs_YLAAAF
+2026-08-19 22:48:16 | INFO     | api.socket_handler | query:42 | Query from DmY1Q0oV0kCgs_YLAAAF (chat=chat-A): 'What was total revenue and net income for Apex Financial Holdings?'
+2026-08-19 22:48:16 | INFO     | services.chat_service | query_stream:80 | Run 51323b46fab64ed4add6e1701787e9e4 started: 'What was total revenue and net income for Apex Financial Holdings?' (session=chat-A)
+2026-08-19 22:48:16 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat chat-A
+2026-08-19 22:48:16 | INFO     | services.vector_service | search:104 | Retrieved 0 chunk(s) for 'What was total revenue and net income for Apex Fin' (chat=chat-A)
+2026-08-19 22:48:16 | DEBUG    | graph.nodes | retrieve:68 | Retrieved 0 chars of context from 0 chunk(s)
+2026-08-19 22:48:16 | INFO     | graph.nodes | no_filing:77 | No filing in this chat — asking for one instead of answering
+2026-08-19 22:48:16 | INFO     | services.chat_service | query_stream:107 | Run 51323b46fab64ed4add6e1701787e9e4 finished (category=qa)
+2026-08-19 22:48:16 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: DmY1Q0oV0kCgs_YLAAAF
+2026-08-19 22:48:16 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat never-existed
+2026-08-19 22:48:29 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting mock_10k_filing.txt (2417 bytes) into chat leftover-chat
+2026-08-19 22:48:29 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat leftover-chat
+2026-08-19 22:48:29 | INFO     | services.vector_service | ingest_file:90 | Ingested mock_10k_filing.txt -> 3 chunks (chat=leftover-chat)
+2026-08-19 22:48:29 | INFO     | main | upload_file:89 | Uploaded mock_10k_filing.txt -> 3 chunks
+2026-08-19 22:48:57 | INFO     | prompts.templates | _load_prompts:31 | Loaded 9 prompts from prompts.yaml
+2026-08-19 22:48:58 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-19 22:48:58 | INFO     | services.vector_service | _drop_stale_collections:155 | Cleared 3 orphaned chat collection(s) from disk
+2026-08-19 22:48:58 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-19 22:48:58 | INFO     | services.router_service | __init__:21 | RouterService ready (8 categories)
+2026-08-19 22:48:58 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-19 22:48:58 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-19 22:48:58 | INFO     | services.chat_service | __init__:42 | ChatService ready
+2026-08-19 22:48:58 | INFO     | main | <module>:108 | Backend ready — HTTP + Socket.IO mounted
+2026-08-19 22:50:29 | INFO     | prompts.templates | _load_prompts:31 | Loaded 9 prompts from prompts.yaml
+2026-08-19 22:50:29 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-19 22:50:29 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-19 22:50:29 | INFO     | services.router_service | __init__:21 | RouterService ready (8 categories)
+2026-08-19 22:50:29 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-19 22:50:29 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-19 22:50:29 | INFO     | services.chat_service | __init__:42 | ChatService ready
+2026-08-19 22:50:29 | INFO     | main | <module>:108 | Backend ready — HTTP + Socket.IO mounted
+2026-08-19 23:09:03 | INFO     | prompts.templates | _load_prompts:31 | Loaded 9 prompts from prompts.yaml
+2026-08-19 23:09:03 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-19 23:09:04 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-19 23:09:04 | INFO     | services.router_service | __init__:21 | RouterService ready (8 categories)
+2026-08-19 23:09:04 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-19 23:09:04 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-19 23:09:04 | INFO     | services.chat_service | __init__:42 | ChatService ready
+2026-08-19 23:09:04 | INFO     | main | <module>:108 | Backend ready — HTTP + Socket.IO mounted
+2026-08-19 23:09:51 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting apex_10k.txt (2417 bytes) into chat chat-A
+2026-08-19 23:09:51 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat chat-A
+2026-08-19 23:09:53 | INFO     | services.vector_service | ingest_file:90 | Ingested apex_10k.txt -> 3 chunks (chat=chat-A)
+2026-08-19 23:09:53 | INFO     | main | upload_file:89 | Uploaded apex_10k.txt -> 3 chunks
+2026-08-19 23:09:53 | INFO     | api.socket_handler | connect:24 | Client connected: oNMvzu5xM9H7BBhQAAAB
+2026-08-19 23:09:53 | INFO     | api.socket_handler | query:58 | Query from oNMvzu5xM9H7BBhQAAAB (chat=chat-A): 'What was total revenue and net income for Apex Financial Holdings?'
+2026-08-19 23:09:53 | INFO     | services.chat_service | query_stream:80 | Run 0480f248160740b58c5b2940ff25063a started: 'What was total revenue and net income for Apex Financial Holdings?' (session=chat-A)
+2026-08-19 23:09:53 | INFO     | services.vector_service | search:104 | Retrieved 3 chunk(s) for 'What was total revenue and net income for Apex Fin' (chat=chat-A)
+2026-08-19 23:09:53 | DEBUG    | graph.nodes | retrieve:68 | Retrieved 2416 chars of context from 3 chunk(s)
+2026-08-19 23:09:53 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 23:09:56 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 21 characters
+2026-08-19 23:09:56 | INFO     | services.router_service | classify:42 | Routed 'What was total revenue and net income for Apex Financial Hol' -> financials
+2026-08-19 23:09:56 | DEBUG    | services.router_service | classify:43 | Router raw reply: 'assistant\n\nfinancials'
+2026-08-19 23:09:56 | INFO     | graph.nodes | node:99 | Running Financials analysis
+2026-08-19 23:09:56 | DEBUG    | services.analysis_service | analyze:27 | Analyzing category=financials (context=2416 chars, query='What was total revenue and net income for Apex Financial Hol')
+2026-08-19 23:09:56 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 2 message(s)
+2026-08-19 23:10:06 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 1981 characters
+2026-08-19 23:10:06 | INFO     | services.analysis_service | analyze:34 | Analysis complete: category=financials, answer=1981 chars
+2026-08-19 23:10:06 | INFO     | services.chat_service | query_stream:107 | Run 0480f248160740b58c5b2940ff25063a finished (category=financials)
+2026-08-19 23:10:06 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: oNMvzu5xM9H7BBhQAAAB
+2026-08-19 23:10:06 | INFO     | api.socket_handler | connect:24 | Client connected: F7lxGaZJJUrg9cbqAAAD
+2026-08-19 23:10:06 | INFO     | api.socket_handler | query:58 | Query from F7lxGaZJJUrg9cbqAAAD (chat=chat-B): 'What was total revenue and net income for Apex Financial Holdings?'
+2026-08-19 23:10:06 | INFO     | services.chat_service | query_stream:80 | Run 6e2afd0253e2402490d8df4279d4eaaa started: 'What was total revenue and net income for Apex Financial Holdings?' (session=chat-B)
+2026-08-19 23:10:06 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat chat-B
+2026-08-19 23:10:06 | INFO     | services.vector_service | search:104 | Retrieved 0 chunk(s) for 'What was total revenue and net income for Apex Fin' (chat=chat-B)
+2026-08-19 23:10:06 | DEBUG    | graph.nodes | retrieve:68 | Retrieved 0 chars of context from 0 chunk(s)
+2026-08-19 23:10:06 | INFO     | graph.nodes | no_filing:77 | No filing in this chat — asking for one instead of answering
+2026-08-19 23:10:06 | INFO     | services.chat_service | query_stream:107 | Run 6e2afd0253e2402490d8df4279d4eaaa finished (category=qa)
+2026-08-19 23:10:06 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: F7lxGaZJJUrg9cbqAAAD
+2026-08-19 23:10:06 | INFO     | api.socket_handler | connect:24 | Client connected: nT6jmxrv-M2LkolWAAAF
+2026-08-19 23:10:06 | WARNING  | api.socket_handler | query:50 | Query from nT6jmxrv-M2LkolWAAAF carried no session id — refused
+2026-08-19 23:10:06 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: nT6jmxrv-M2LkolWAAAF
+2026-08-19 23:10:06 | INFO     | services.vector_service | delete_session:118 | Deleted filings for chat chat-A
+2026-08-19 23:10:06 | INFO     | api.socket_handler | connect:24 | Client connected: 4HR9IuFHcNeI9fiKAAAH
+2026-08-19 23:10:06 | INFO     | api.socket_handler | query:58 | Query from 4HR9IuFHcNeI9fiKAAAH (chat=chat-A): 'What was total revenue and net income for Apex Financial Holdings?'
+2026-08-19 23:10:06 | INFO     | services.chat_service | query_stream:80 | Run 361d9e58f14748aabcc2e688356416ef started: 'What was total revenue and net income for Apex Financial Holdings?' (session=chat-A)
+2026-08-19 23:10:06 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat chat-A
+2026-08-19 23:10:06 | INFO     | services.vector_service | search:104 | Retrieved 0 chunk(s) for 'What was total revenue and net income for Apex Fin' (chat=chat-A)
+2026-08-19 23:10:06 | DEBUG    | graph.nodes | retrieve:68 | Retrieved 0 chars of context from 0 chunk(s)
+2026-08-19 23:10:06 | INFO     | graph.nodes | no_filing:77 | No filing in this chat — asking for one instead of answering
+2026-08-19 23:10:06 | INFO     | services.chat_service | query_stream:107 | Run 361d9e58f14748aabcc2e688356416ef finished (category=qa)
+2026-08-19 23:10:06 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: 4HR9IuFHcNeI9fiKAAAH
+2026-08-19 23:15:56 | INFO     | prompts.templates | _load_prompts:31 | Loaded 9 prompts from prompts.yaml
+2026-08-19 23:15:57 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-19 23:15:57 | INFO     | services.vector_service | _drop_stale_collections:155 | Cleared 2 orphaned chat collection(s) from disk
+2026-08-19 23:15:57 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-19 23:15:57 | INFO     | services.router_service | __init__:21 | RouterService ready (8 categories)
+2026-08-19 23:15:57 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-19 23:15:57 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-19 23:15:57 | INFO     | services.chat_service | __init__:42 | ChatService ready
+2026-08-19 23:15:57 | INFO     | main | <module>:108 | Backend ready — HTTP + Socket.IO mounted
+2026-08-19 23:15:59 | INFO     | api.socket_handler | connect:24 | Client connected: 65K5iVw8PczSRJAVAAAB
+2026-08-19 23:16:16 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting mock_10k_filing.txt (2417 bytes) into chat probe1
+2026-08-19 23:16:16 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat probe1
+2026-08-19 23:16:18 | INFO     | services.vector_service | ingest_file:90 | Ingested mock_10k_filing.txt -> 3 chunks (chat=probe1)
+2026-08-19 23:16:18 | INFO     | main | upload_file:89 | Uploaded mock_10k_filing.txt -> 3 chunks
+2026-08-19 23:16:18 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting mock_10k_filing.txt (2417 bytes) into chat probe1
+2026-08-19 23:16:18 | INFO     | services.vector_service | ingest_file:90 | Ingested mock_10k_filing.txt -> 3 chunks (chat=probe1)
+2026-08-19 23:16:18 | INFO     | main | upload_file:89 | Uploaded mock_10k_filing.txt -> 3 chunks
+2026-08-19 23:16:33 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting filing.pdf (27506 bytes) into chat probe1
+2026-08-19 23:16:33 | INFO     | services.vector_service | _read_pdf:170 | Parsed 1 page(s) with text from filing.pdf
+2026-08-19 23:16:33 | INFO     | services.vector_service | ingest_file:90 | Ingested filing.pdf -> 1 chunks (chat=probe1)
+2026-08-19 23:16:33 | INFO     | main | upload_file:89 | Uploaded filing.pdf -> 1 chunks
+2026-08-19 23:16:33 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting scanned.pdf (300 bytes) into chat probe1
+2026-08-19 23:16:33 | WARNING  | pypdf._reader | logger_warning:494 | invalid pdf header: b'0*2)\xac'
+2026-08-19 23:16:33 | WARNING  | pypdf._reader | logger_warning:499 | EOF marker not found
+2026-08-19 23:18:38 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: 65K5iVw8PczSRJAVAAAB
+2026-08-19 23:19:08 | INFO     | prompts.templates | _load_prompts:31 | Loaded 9 prompts from prompts.yaml
+2026-08-19 23:19:08 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-19 23:19:08 | INFO     | services.vector_service | _drop_stale_collections:155 | Cleared 1 orphaned chat collection(s) from disk
+2026-08-19 23:19:08 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-19 23:19:08 | INFO     | services.router_service | __init__:21 | RouterService ready (8 categories)
+2026-08-19 23:19:08 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-19 23:19:08 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-19 23:19:08 | INFO     | services.chat_service | __init__:42 | ChatService ready
+2026-08-19 23:19:08 | INFO     | main | <module>:117 | Backend ready — HTTP + Socket.IO mounted
+2026-08-19 23:19:08 | INFO     | api.socket_handler | connect:24 | Client connected: EsNZmk7Ci3r_6vYpAAAB
+2026-08-19 23:19:12 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: EsNZmk7Ci3r_6vYpAAAB
+2026-08-19 23:19:12 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 17871614841360.9330618078811773
+2026-08-19 23:19:12 | INFO     | api.socket_handler | connect:24 | Client connected: VLza6LZUuURkD3KjAAAD
+2026-08-19 23:19:31 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting scanned.pdf (300 bytes) into chat probe2
+2026-08-19 23:19:31 | WARNING  | pypdf._reader | logger_warning:494 | invalid pdf header: b'0*2)\xac'
+2026-08-19 23:19:31 | WARNING  | pypdf._reader | logger_warning:499 | EOF marker not found
+2026-08-19 23:19:31 | WARNING  | services.vector_service | _read_pdf:171 | Could not open scanned.pdf as a PDF: Stream has ended unexpectedly
+2026-08-19 23:19:31 | WARNING  | main | upload_file:86 | Upload rejected (scanned.pdf): Could not read scanned.pdf — the file is not a readable PDF (it may be corrupt or incomplete).
+2026-08-19 23:19:31 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting filing.pdf (27506 bytes) into chat probe2
+2026-08-19 23:19:31 | INFO     | services.vector_service | _read_pdf:214 | Parsed 1 page(s) with text from filing.pdf (0 unreadable)
+2026-08-19 23:19:31 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat probe2
+2026-08-19 23:19:31 | INFO     | services.vector_service | ingest_file:90 | Ingested filing.pdf -> 1 chunks (chat=probe2)
+2026-08-19 23:19:31 | INFO     | main | upload_file:98 | Uploaded filing.pdf -> 1 chunks
+2026-08-19 23:19:31 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting note.xyz (5 bytes) into chat probe2
+2026-08-19 23:19:31 | WARNING  | main | upload_file:86 | Upload rejected (note.xyz): Unsupported file type '.xyz'. Supported: .pdf, .txt, .md, .csv
+2026-08-19 23:19:31 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting fake.pdf (25 bytes) into chat probe2
+2026-08-19 23:19:31 | WARNING  | pypdf._reader | logger_warning:499 | EOF marker not found
+2026-08-19 23:19:31 | WARNING  | services.vector_service | _read_pdf:171 | Could not open fake.pdf as a PDF: Stream has ended unexpectedly
+2026-08-19 23:19:31 | WARNING  | main | upload_file:86 | Upload rejected (fake.pdf): Could not read fake.pdf — the file is not a readable PDF (it may be corrupt or incomplete).
+2026-08-19 23:19:45 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting locked.pdf (26966 bytes) into chat probe3
+2026-08-19 23:19:45 | WARNING  | main | upload_file:86 | Upload rejected (locked.pdf): locked.pdf is password protected. Remove the password and upload it again.
+2026-08-19 23:19:45 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting blank.pdf (431 bytes) into chat probe3
+2026-08-19 23:19:45 | WARNING  | main | upload_file:86 | Upload rejected (blank.pdf): No readable text found in blank.pdf. Scanned PDFs need to be run through OCR before they can be analyzed.
+2026-08-19 23:20:09 | INFO     | api.socket_handler | connect:24 | Client connected: wIJjVULeMB1q0QQ6AAAF
+2026-08-19 23:20:09 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting broken_filing.pdf (300 bytes) into chat c8e328fc3081401e9a234f556d3f8567
+2026-08-19 23:20:09 | WARNING  | pypdf._reader | logger_warning:494 | invalid pdf header: b'0*2)\xac'
+2026-08-19 23:20:09 | WARNING  | pypdf._reader | logger_warning:499 | EOF marker not found
+2026-08-19 23:20:09 | WARNING  | services.vector_service | _read_pdf:171 | Could not open broken_filing.pdf as a PDF: Stream has ended unexpectedly
+2026-08-19 23:20:09 | WARNING  | main | upload_file:86 | Upload rejected (broken_filing.pdf): Could not read broken_filing.pdf — the file is not a readable PDF (it may be corrupt or incomplete).
+2026-08-19 23:20:09 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat c8e328fc3081401e9a234f556d3f8567
+2026-08-19 23:20:09 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: wIJjVULeMB1q0QQ6AAAF
+2026-08-19 23:21:07 | INFO     | api.socket_handler | connect:24 | Client connected: ozqnTfGVnlbZiYn7AAAH
+2026-08-19 23:21:07 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting broken_filing.pdf (300 bytes) into chat 7c639694681a40cab54bb32708e6ed55
+2026-08-19 23:21:07 | WARNING  | pypdf._reader | logger_warning:494 | invalid pdf header: b'0*2)\xac'
+2026-08-19 23:21:07 | WARNING  | pypdf._reader | logger_warning:499 | EOF marker not found
+2026-08-19 23:21:07 | WARNING  | services.vector_service | _read_pdf:171 | Could not open broken_filing.pdf as a PDF: Stream has ended unexpectedly
+2026-08-19 23:21:07 | WARNING  | main | upload_file:86 | Upload rejected (broken_filing.pdf): Could not read broken_filing.pdf — the file is not a readable PDF (it may be corrupt or incomplete).
+2026-08-19 23:21:07 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 7c639694681a40cab54bb32708e6ed55
+2026-08-19 23:21:07 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: ozqnTfGVnlbZiYn7AAAH
+2026-08-19 23:22:03 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: VLza6LZUuURkD3KjAAAD
+2026-08-19 23:22:16 | INFO     | prompts.templates | _load_prompts:31 | Loaded 9 prompts from prompts.yaml
+2026-08-19 23:22:16 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-19 23:22:16 | INFO     | services.vector_service | _drop_stale_collections:155 | Cleared 1 orphaned chat collection(s) from disk
+2026-08-19 23:22:16 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-19 23:22:16 | INFO     | services.router_service | __init__:21 | RouterService ready (8 categories)
+2026-08-19 23:22:16 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-19 23:22:16 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-19 23:22:16 | INFO     | services.chat_service | __init__:42 | ChatService ready
+2026-08-19 23:22:16 | INFO     | main | <module>:117 | Backend ready — HTTP + Socket.IO mounted
+2026-08-19 23:22:17 | INFO     | api.socket_handler | connect:24 | Client connected: 63q7H0t4b9gd23y9AAAB
+2026-08-19 23:22:41 | INFO     | api.socket_handler | connect:24 | Client connected: N0_9VRru-KoE72ieAAAD
+2026-08-19 23:22:41 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting broken_filing.pdf (300 bytes) into chat a43156e9c45d4baf9c9c6f82b4afd7aa
+2026-08-19 23:22:41 | WARNING  | pypdf._reader | logger_warning:494 | invalid pdf header: b'0*2)\xac'
+2026-08-19 23:22:41 | WARNING  | pypdf._reader | logger_warning:499 | EOF marker not found
+2026-08-19 23:22:41 | WARNING  | services.vector_service | _read_pdf:171 | Could not open broken_filing.pdf as a PDF: Stream has ended unexpectedly
+2026-08-19 23:22:41 | WARNING  | main | upload_file:86 | Upload rejected (broken_filing.pdf): broken_filing.pdf is not a readable PDF — the file looks corrupt or incomplete.
+2026-08-19 23:22:41 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat a43156e9c45d4baf9c9c6f82b4afd7aa
+2026-08-19 23:22:41 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: N0_9VRru-KoE72ieAAAD
+2026-08-19 23:23:07 | INFO     | api.socket_handler | connect:24 | Client connected: XpU5keZsVWGc4nz2AAAF
+2026-08-19 23:23:07 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting apex_10k_2024.pdf (27506 bytes) into chat 6773a6ccdb7e4e98a04e4ae2a4a3e07f
+2026-08-19 23:23:07 | INFO     | services.vector_service | _read_pdf:214 | Parsed 1 page(s) with text from apex_10k_2024.pdf (0 unreadable)
+2026-08-19 23:23:07 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat 6773a6ccdb7e4e98a04e4ae2a4a3e07f
+2026-08-19 23:23:07 | INFO     | services.vector_service | ingest_file:90 | Ingested apex_10k_2024.pdf -> 1 chunks (chat=6773a6ccdb7e4e98a04e4ae2a4a3e07f)
+2026-08-19 23:23:07 | INFO     | main | upload_file:98 | Uploaded apex_10k_2024.pdf -> 1 chunks
+2026-08-19 23:23:07 | INFO     | api.socket_handler | query:58 | Query from XpU5keZsVWGc4nz2AAAF (chat=6773a6ccdb7e4e98a04e4ae2a4a3e07f): 'What was total revenue and net income?'
+2026-08-19 23:23:07 | INFO     | services.chat_service | query_stream:80 | Run f9bf6b9d74ce4cf5a34bc452a4a9c479 started: 'What was total revenue and net income?' (session=6773a6ccdb7e4e98a04e4ae2a4a3e07f)
+2026-08-19 23:23:07 | INFO     | services.vector_service | search:104 | Retrieved 1 chunk(s) for 'What was total revenue and net income?' (chat=6773a6ccdb7e4e98a04e4ae2a4a3e07f)
+2026-08-19 23:23:07 | DEBUG    | graph.nodes | retrieve:68 | Retrieved 231 chars of context from 1 chunk(s)
+2026-08-19 23:23:07 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 23:23:07 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: XpU5keZsVWGc4nz2AAAF
+2026-08-19 23:23:08 | INFO     | services.vector_service | delete_session:118 | Deleted filings for chat 6773a6ccdb7e4e98a04e4ae2a4a3e07f
+2026-08-19 23:23:11 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 21 characters
+2026-08-19 23:23:11 | INFO     | services.router_service | classify:42 | Routed 'What was total revenue and net income?' -> financials
+2026-08-19 23:23:11 | DEBUG    | services.router_service | classify:43 | Router raw reply: 'assistant\n\nfinancials'
+2026-08-19 23:23:11 | INFO     | graph.nodes | node:99 | Running Financials analysis
+2026-08-19 23:23:11 | DEBUG    | services.analysis_service | analyze:27 | Analyzing category=financials (context=231 chars, query='What was total revenue and net income?')
+2026-08-19 23:23:11 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 2 message(s)
+2026-08-19 23:23:17 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 1206 characters
+2026-08-19 23:23:17 | INFO     | services.analysis_service | analyze:34 | Analysis complete: category=financials, answer=1206 chars
+2026-08-19 23:23:17 | INFO     | services.chat_service | query_stream:107 | Run f9bf6b9d74ce4cf5a34bc452a4a9c479 finished (category=financials)
+2026-08-19 23:23:41 | INFO     | api.socket_handler | connect:24 | Client connected: eikm3emooEfP3AuGAAAI
+2026-08-19 23:23:42 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 913c064fec9640c3abc30a4311d48292
+2026-08-19 23:23:42 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: eikm3emooEfP3AuGAAAI
+2026-08-19 23:23:58 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting n.md (22 bytes) into chat probe4
+2026-08-19 23:23:58 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat probe4
+2026-08-19 23:23:58 | INFO     | services.vector_service | ingest_file:90 | Ingested n.md -> 1 chunks (chat=probe4)
+2026-08-19 23:23:58 | INFO     | main | upload_file:98 | Uploaded n.md -> 1 chunks
+2026-08-19 23:23:58 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting n.csv (8 bytes) into chat probe4
+2026-08-19 23:23:58 | INFO     | services.vector_service | ingest_file:90 | Ingested n.csv -> 1 chunks (chat=probe4)
+2026-08-19 23:23:58 | INFO     | main | upload_file:98 | Uploaded n.csv -> 1 chunks
+2026-08-19 23:23:58 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting apex_10k.txt (2417 bytes) into chat chat-A
+2026-08-19 23:23:58 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat chat-A
+2026-08-19 23:23:58 | INFO     | services.vector_service | ingest_file:90 | Ingested apex_10k.txt -> 3 chunks (chat=chat-A)
+2026-08-19 23:23:58 | INFO     | main | upload_file:98 | Uploaded apex_10k.txt -> 3 chunks
+2026-08-19 23:23:58 | INFO     | api.socket_handler | connect:24 | Client connected: S5Xo6wF6BmncDL4gAAAK
+2026-08-19 23:23:58 | INFO     | api.socket_handler | query:58 | Query from S5Xo6wF6BmncDL4gAAAK (chat=chat-A): 'What was total revenue and net income for Apex Financial Holdings?'
+2026-08-19 23:23:58 | INFO     | services.chat_service | query_stream:80 | Run 163d0c24f4c5426eb62cee3fe89348b4 started: 'What was total revenue and net income for Apex Financial Holdings?' (session=chat-A)
+2026-08-19 23:23:58 | INFO     | services.vector_service | search:104 | Retrieved 3 chunk(s) for 'What was total revenue and net income for Apex Fin' (chat=chat-A)
+2026-08-19 23:23:58 | DEBUG    | graph.nodes | retrieve:68 | Retrieved 2416 chars of context from 3 chunk(s)
+2026-08-19 23:23:58 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 23:23:59 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 21 characters
+2026-08-19 23:23:59 | INFO     | services.router_service | classify:42 | Routed 'What was total revenue and net income for Apex Financial Hol' -> financials
+2026-08-19 23:23:59 | DEBUG    | services.router_service | classify:43 | Router raw reply: 'assistant\n\nfinancials'
+2026-08-19 23:23:59 | INFO     | graph.nodes | node:99 | Running Financials analysis
+2026-08-19 23:23:59 | DEBUG    | services.analysis_service | analyze:27 | Analyzing category=financials (context=2416 chars, query='What was total revenue and net income for Apex Financial Hol')
+2026-08-19 23:23:59 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 2 message(s)
+2026-08-19 23:24:08 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 1981 characters
+2026-08-19 23:24:08 | INFO     | services.analysis_service | analyze:34 | Analysis complete: category=financials, answer=1981 chars
+2026-08-19 23:24:08 | INFO     | services.chat_service | query_stream:107 | Run 163d0c24f4c5426eb62cee3fe89348b4 finished (category=financials)
+2026-08-19 23:24:08 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: S5Xo6wF6BmncDL4gAAAK
+2026-08-19 23:24:08 | INFO     | api.socket_handler | connect:24 | Client connected: iOXgNiJkaCFXM7AFAAAM
+2026-08-19 23:24:08 | INFO     | api.socket_handler | query:58 | Query from iOXgNiJkaCFXM7AFAAAM (chat=chat-B): 'What was total revenue and net income for Apex Financial Holdings?'
+2026-08-19 23:24:08 | INFO     | services.chat_service | query_stream:80 | Run 72e8f4e285204e50b238eff42f11cd56 started: 'What was total revenue and net income for Apex Financial Holdings?' (session=chat-B)
+2026-08-19 23:24:08 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat chat-B
+2026-08-19 23:24:08 | INFO     | services.vector_service | search:104 | Retrieved 0 chunk(s) for 'What was total revenue and net income for Apex Fin' (chat=chat-B)
+2026-08-19 23:24:08 | DEBUG    | graph.nodes | retrieve:68 | Retrieved 0 chars of context from 0 chunk(s)
+2026-08-19 23:24:08 | INFO     | graph.nodes | no_filing:77 | No filing in this chat — asking for one instead of answering
+2026-08-19 23:24:08 | INFO     | services.chat_service | query_stream:107 | Run 72e8f4e285204e50b238eff42f11cd56 finished (category=qa)
+2026-08-19 23:24:08 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: iOXgNiJkaCFXM7AFAAAM
+2026-08-19 23:24:08 | INFO     | api.socket_handler | connect:24 | Client connected: 5GGiflqiKfVZbxS4AAAO
+2026-08-19 23:24:08 | WARNING  | api.socket_handler | query:50 | Query from 5GGiflqiKfVZbxS4AAAO carried no session id — refused
+2026-08-19 23:24:08 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: 5GGiflqiKfVZbxS4AAAO
+2026-08-19 23:24:08 | INFO     | services.vector_service | delete_session:118 | Deleted filings for chat chat-A
+2026-08-19 23:24:08 | INFO     | api.socket_handler | connect:24 | Client connected: dtlrsNdlvQ0bGuY4AAAQ
+2026-08-19 23:24:08 | INFO     | api.socket_handler | query:58 | Query from dtlrsNdlvQ0bGuY4AAAQ (chat=chat-A): 'What was total revenue and net income for Apex Financial Holdings?'
+2026-08-19 23:24:08 | INFO     | services.chat_service | query_stream:80 | Run 425f4ffea5bd4c84b6ccdc601df9e3b4 started: 'What was total revenue and net income for Apex Financial Holdings?' (session=chat-A)
+2026-08-19 23:24:08 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat chat-A
+2026-08-19 23:24:09 | INFO     | services.vector_service | search:104 | Retrieved 0 chunk(s) for 'What was total revenue and net income for Apex Fin' (chat=chat-A)
+2026-08-19 23:24:09 | DEBUG    | graph.nodes | retrieve:68 | Retrieved 0 chars of context from 0 chunk(s)
+2026-08-19 23:24:09 | INFO     | graph.nodes | no_filing:77 | No filing in this chat — asking for one instead of answering
+2026-08-19 23:24:09 | INFO     | services.chat_service | query_stream:107 | Run 425f4ffea5bd4c84b6ccdc601df9e3b4 finished (category=qa)
+2026-08-19 23:24:09 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: dtlrsNdlvQ0bGuY4AAAQ
+2026-08-19 23:24:29 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 17871617523340.1645761672289041
+2026-08-19 23:24:29 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: 63q7H0t4b9gd23y9AAAB
+2026-08-19 23:29:37 | INFO     | prompts.templates | _load_prompts:31 | Loaded 9 prompts from prompts.yaml
+2026-08-19 23:29:37 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-19 23:29:38 | INFO     | services.vector_service | _drop_stale_collections:155 | Cleared 3 orphaned chat collection(s) from disk
+2026-08-19 23:29:38 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-19 23:29:38 | INFO     | services.router_service | __init__:21 | RouterService ready (8 categories)
+2026-08-19 23:29:38 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-19 23:29:38 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-19 23:29:38 | INFO     | services.chat_service | __init__:42 | ChatService ready
+2026-08-19 23:29:38 | INFO     | main | <module>:117 | Backend ready — HTTP + Socket.IO mounted
+2026-08-19 23:30:51 | INFO     | prompts.templates | _load_prompts:31 | Loaded 9 prompts from prompts.yaml
+2026-08-19 23:30:52 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-19 23:30:52 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-19 23:30:52 | INFO     | services.router_service | __init__:21 | RouterService ready (8 categories)
+2026-08-19 23:30:52 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-19 23:30:52 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-19 23:30:52 | INFO     | services.chat_service | __init__:42 | ChatService ready
+2026-08-19 23:30:52 | INFO     | main | <module>:117 | Backend ready — HTTP + Socket.IO mounted
+2026-08-19 23:30:55 | INFO     | api.socket_handler | connect:24 | Client connected: cGliLU_YgGYRIIrpAAAB
+2026-08-19 23:31:09 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting mock_10k_filing.txt (2417 bytes) into chat smoke-test
+2026-08-19 23:31:09 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat smoke-test
+2026-08-19 23:31:09 | INFO     | services.vector_service | ingest_file:90 | Ingested mock_10k_filing.txt -> 3 chunks (chat=smoke-test)
+2026-08-19 23:31:09 | INFO     | main | upload_file:98 | Uploaded mock_10k_filing.txt -> 3 chunks
+2026-08-19 23:31:09 | INFO     | services.vector_service | delete_session:118 | Deleted filings for chat smoke-test
+2026-08-19 23:31:46 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: cGliLU_YgGYRIIrpAAAB
+2026-08-19 23:31:46 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 17871624500150.8477161946574101
+2026-08-19 23:31:46 | INFO     | api.socket_handler | connect:24 | Client connected: Di6TTqDvU6hcRpYhAAAD
+2026-08-19 23:31:48 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: Di6TTqDvU6hcRpYhAAAD
+2026-08-19 23:31:48 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 17871625066960.623617085702301
+2026-08-19 23:31:48 | INFO     | api.socket_handler | connect:24 | Client connected: DKy_9SyMkRJuQbNvAAAF
+2026-08-19 23:31:49 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: DKy_9SyMkRJuQbNvAAAF
+2026-08-19 23:31:49 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 17871625087850.9627661333835005
+2026-08-19 23:31:49 | INFO     | api.socket_handler | connect:24 | Client connected: mPMjIZlQI4-jM-YdAAAH
+2026-08-19 23:32:05 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting mock_10k_filing.txt (2417 bytes) into chat 17871625091070.24893317233185164
+2026-08-19 23:32:05 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat 17871625091070.24893317233185164
+2026-08-19 23:32:05 | INFO     | services.vector_service | ingest_file:90 | Ingested mock_10k_filing.txt -> 3 chunks (chat=17871625091070.24893317233185164)
+2026-08-19 23:32:05 | INFO     | main | upload_file:98 | Uploaded mock_10k_filing.txt -> 3 chunks
+2026-08-19 23:32:05 | INFO     | api.socket_handler | query:58 | Query from mPMjIZlQI4-jM-YdAAAH (chat=17871625091070.24893317233185164): 'what is the revenue fy 2024?'
+2026-08-19 23:32:05 | INFO     | services.chat_service | query_stream:80 | Run 7a9e1034115a4ca3b49b59a21aecad04 started: 'what is the revenue fy 2024?' (session=17871625091070.24893317233185164)
+2026-08-19 23:32:05 | INFO     | services.vector_service | search:104 | Retrieved 3 chunk(s) for 'what is the revenue fy 2024?' (chat=17871625091070.24893317233185164)
+2026-08-19 23:32:05 | DEBUG    | graph.nodes | retrieve:68 | Retrieved 2416 chars of context from 3 chunk(s)
+2026-08-19 23:32:05 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 23:32:05 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 21 characters
+2026-08-19 23:32:05 | INFO     | services.router_service | classify:42 | Routed 'what is the revenue fy 2024?' -> financials
+2026-08-19 23:32:05 | DEBUG    | services.router_service | classify:43 | Router raw reply: 'assistant\n\nfinancials'
+2026-08-19 23:32:05 | INFO     | graph.nodes | node:99 | Running Financials analysis
+2026-08-19 23:32:05 | DEBUG    | services.analysis_service | analyze:27 | Analyzing category=financials (context=2416 chars, query='what is the revenue fy 2024?')
+2026-08-19 23:32:05 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 2 message(s)
+2026-08-19 23:32:15 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 2013 characters
+2026-08-19 23:32:15 | INFO     | services.analysis_service | analyze:34 | Analysis complete: category=financials, answer=2013 chars
+2026-08-19 23:32:15 | INFO     | services.chat_service | query_stream:107 | Run 7a9e1034115a4ca3b49b59a21aecad04 finished (category=financials)
+2026-08-19 23:32:39 | INFO     | api.socket_handler | query:58 | Query from mPMjIZlQI4-jM-YdAAAH (chat=17871625091070.24893317233185164): 'summarize'
+2026-08-19 23:32:39 | INFO     | services.chat_service | query_stream:80 | Run 4073ac5512834036b5bcadaebd83c1c5 started: 'summarize' (session=17871625091070.24893317233185164)
+2026-08-19 23:32:39 | INFO     | services.vector_service | search:104 | Retrieved 3 chunk(s) for 'summarize' (chat=17871625091070.24893317233185164)
+2026-08-19 23:32:39 | DEBUG    | graph.nodes | retrieve:68 | Retrieved 2416 chars of context from 3 chunk(s)
+2026-08-19 23:32:39 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 23:32:39 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 18 characters
+2026-08-19 23:32:39 | INFO     | services.router_service | classify:42 | Routed 'summarize' -> summary
+2026-08-19 23:32:39 | DEBUG    | services.router_service | classify:43 | Router raw reply: 'assistant\n\nsummary'
+2026-08-19 23:32:39 | INFO     | graph.nodes | node:99 | Running Executive Summary analysis
+2026-08-19 23:32:39 | DEBUG    | services.analysis_service | analyze:27 | Analyzing category=summary (context=2416 chars, query='summarize')
+2026-08-19 23:32:39 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 2 message(s)
+2026-08-19 23:32:49 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 2328 characters
+2026-08-19 23:32:49 | INFO     | services.analysis_service | analyze:34 | Analysis complete: category=summary, answer=2328 chars
+2026-08-19 23:32:49 | INFO     | services.chat_service | query_stream:107 | Run 4073ac5512834036b5bcadaebd83c1c5 finished (category=summary)
+2026-08-19 23:33:18 | INFO     | services.vector_service | delete_session:118 | Deleted filings for chat 17871625091070.24893317233185164
+2026-08-19 23:41:09 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: mPMjIZlQI4-jM-YdAAAH
+2026-08-19 23:41:44 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-19 23:41:45 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-19 23:41:45 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-19 23:41:45 | INFO     | services.router_service | __init__:32 | RouterService ready (8 categories)
+2026-08-19 23:41:45 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-19 23:41:45 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-19 23:41:45 | INFO     | services.chat_service | __init__:42 | ChatService ready
+2026-08-19 23:41:45 | INFO     | main | <module>:117 | Backend ready — HTTP + Socket.IO mounted
+2026-08-19 23:41:49 | INFO     | api.socket_handler | connect:24 | Client connected: rwmsXBlhU1jjz_0_AAAB
+2026-08-19 23:42:12 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting mock_10k_filing.txt (2417 bytes) into chat title-smoke
+2026-08-19 23:42:12 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat title-smoke
+2026-08-19 23:42:13 | INFO     | services.vector_service | ingest_file:90 | Ingested mock_10k_filing.txt -> 3 chunks (chat=title-smoke)
+2026-08-19 23:42:13 | INFO     | main | upload_file:98 | Uploaded mock_10k_filing.txt -> 3 chunks
+2026-08-19 23:42:13 | INFO     | api.socket_handler | connect:24 | Client connected: WfRM8fIbncspLSG8AAAD
+2026-08-19 23:42:13 | INFO     | api.socket_handler | query:61 | Query from WfRM8fIbncspLSG8AAAD (chat=title-smoke): 'What was total revenue and net income for fiscal 2024?'
+2026-08-19 23:42:13 | INFO     | services.chat_service | query_stream:86 | Run 63c0b4f83569486e91cee976e7af6918 started: 'What was total revenue and net income for fiscal 2024?' (session=title-smoke)
+2026-08-19 23:42:13 | INFO     | services.vector_service | search:104 | Retrieved 3 chunk(s) for 'What was total revenue and net income for fiscal 2' (chat=title-smoke)
+2026-08-19 23:42:13 | DEBUG    | graph.nodes | retrieve:69 | Retrieved 2416 chars of context from 3 chunk(s)
+2026-08-19 23:42:13 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 23:42:13 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 23:42:17 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 41 characters
+2026-08-19 23:42:17 | INFO     | services.router_service | name_chat:80 | Named 'What was total revenue and net income for fiscal 2024?' -> 'assistant'
+2026-08-19 23:42:17 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 21 characters
+2026-08-19 23:42:17 | INFO     | services.router_service | classify:53 | Routed 'What was total revenue and net income for fiscal 2024?' -> financials
+2026-08-19 23:42:17 | DEBUG    | services.router_service | classify:54 | Router raw reply: 'assistant\n\nfinancials'
+2026-08-19 23:42:17 | INFO     | graph.nodes | node:116 | Running Financials analysis
+2026-08-19 23:42:17 | DEBUG    | services.analysis_service | analyze:27 | Analyzing category=financials (context=2416 chars, query='What was total revenue and net income for fiscal 2024?')
+2026-08-19 23:42:17 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 2 message(s)
+2026-08-19 23:42:27 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 2144 characters
+2026-08-19 23:42:27 | INFO     | services.analysis_service | analyze:34 | Analysis complete: category=financials, answer=2144 chars
+2026-08-19 23:42:27 | INFO     | services.chat_service | query_stream:115 | Run 63c0b4f83569486e91cee976e7af6918 finished (category=financials)
+2026-08-19 23:42:27 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: WfRM8fIbncspLSG8AAAD
+2026-08-19 23:42:27 | INFO     | api.socket_handler | connect:24 | Client connected: ZC9NwvtKC4C1QUmyAAAF
+2026-08-19 23:42:27 | INFO     | api.socket_handler | query:61 | Query from ZC9NwvtKC4C1QUmyAAAF (chat=title-smoke): 'List the Item 1A risk factors.'
+2026-08-19 23:42:27 | INFO     | services.chat_service | query_stream:86 | Run ee40f27b3d0f421197df421dd7d300d8 started: 'List the Item 1A risk factors.' (session=title-smoke)
+2026-08-19 23:42:29 | INFO     | services.vector_service | search:104 | Retrieved 3 chunk(s) for 'List the Item 1A risk factors.' (chat=title-smoke)
+2026-08-19 23:42:29 | DEBUG    | graph.nodes | retrieve:69 | Retrieved 2416 chars of context from 3 chunk(s)
+2026-08-19 23:42:29 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 23:42:29 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 16 characters
+2026-08-19 23:42:29 | INFO     | services.router_service | classify:53 | Routed 'List the Item 1A risk factors.' -> risks
+2026-08-19 23:42:29 | DEBUG    | services.router_service | classify:54 | Router raw reply: 'assistant\n\nrisks'
+2026-08-19 23:42:29 | INFO     | graph.nodes | node:116 | Running Risk Factors analysis
+2026-08-19 23:42:29 | DEBUG    | services.analysis_service | analyze:27 | Analyzing category=risks (context=2416 chars, query='List the Item 1A risk factors.')
+2026-08-19 23:42:29 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 2 message(s)
+2026-08-19 23:42:40 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 3486 characters
+2026-08-19 23:42:40 | INFO     | services.analysis_service | analyze:34 | Analysis complete: category=risks, answer=3486 chars
+2026-08-19 23:42:40 | INFO     | services.chat_service | query_stream:115 | Run ee40f27b3d0f421197df421dd7d300d8 finished (category=risks)
+2026-08-19 23:42:40 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: ZC9NwvtKC4C1QUmyAAAF
+2026-08-19 23:42:40 | INFO     | services.vector_service | delete_session:118 | Deleted filings for chat title-smoke
+2026-08-19 23:49:51 | INFO     | api.socket_handler | connect:24 | Client connected: w2y6EoNLHtKjxLiyAAAH
+2026-08-19 23:49:52 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting mock_10k_filing.txt (2417 bytes) into chat c364c2f3814c4b1999e2d183ee4a32ec
+2026-08-19 23:49:52 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat c364c2f3814c4b1999e2d183ee4a32ec
+2026-08-19 23:49:53 | INFO     | services.vector_service | ingest_file:90 | Ingested mock_10k_filing.txt -> 3 chunks (chat=c364c2f3814c4b1999e2d183ee4a32ec)
+2026-08-19 23:49:53 | INFO     | main | upload_file:98 | Uploaded mock_10k_filing.txt -> 3 chunks
+2026-08-19 23:49:53 | INFO     | api.socket_handler | query:61 | Query from w2y6EoNLHtKjxLiyAAAH (chat=c364c2f3814c4b1999e2d183ee4a32ec): 'What was total revenue and net income for fiscal 2024?'
+2026-08-19 23:49:53 | INFO     | services.chat_service | query_stream:86 | Run 51fcda0bf8a842ef9ccbecc19188f1c6 started: 'What was total revenue and net income for fiscal 2024?' (session=c364c2f3814c4b1999e2d183ee4a32ec)
+2026-08-19 23:49:53 | INFO     | services.vector_service | search:104 | Retrieved 3 chunk(s) for 'What was total revenue and net income for fiscal 2' (chat=c364c2f3814c4b1999e2d183ee4a32ec)
+2026-08-19 23:49:53 | DEBUG    | graph.nodes | retrieve:69 | Retrieved 2416 chars of context from 3 chunk(s)
+2026-08-19 23:49:53 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 23:49:53 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 23:49:57 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 41 characters
+2026-08-19 23:49:57 | INFO     | services.router_service | name_chat:80 | Named 'What was total revenue and net income for fiscal 2024?' -> 'assistant'
+2026-08-19 23:49:58 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 21 characters
+2026-08-19 23:49:58 | INFO     | services.router_service | classify:53 | Routed 'What was total revenue and net income for fiscal 2024?' -> financials
+2026-08-19 23:49:58 | DEBUG    | services.router_service | classify:54 | Router raw reply: 'assistant\n\nfinancials'
+2026-08-19 23:49:58 | INFO     | graph.nodes | node:116 | Running Financials analysis
+2026-08-19 23:49:58 | DEBUG    | services.analysis_service | analyze:27 | Analyzing category=financials (context=2416 chars, query='What was total revenue and net income for fiscal 2024?')
+2026-08-19 23:49:58 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 2 message(s)
+2026-08-19 23:50:08 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 2144 characters
+2026-08-19 23:50:08 | INFO     | services.analysis_service | analyze:34 | Analysis complete: category=financials, answer=2144 chars
+2026-08-19 23:50:08 | INFO     | services.chat_service | query_stream:115 | Run 51fcda0bf8a842ef9ccbecc19188f1c6 finished (category=financials)
+2026-08-19 23:50:08 | INFO     | api.socket_handler | query:61 | Query from w2y6EoNLHtKjxLiyAAAH (chat=c364c2f3814c4b1999e2d183ee4a32ec): 'List the Item 1A risk factors.'
+2026-08-19 23:50:08 | INFO     | services.chat_service | query_stream:86 | Run 10efa23ed8cd4562aa1d8c34a95a0851 started: 'List the Item 1A risk factors.' (session=c364c2f3814c4b1999e2d183ee4a32ec)
+2026-08-19 23:50:08 | INFO     | services.vector_service | search:104 | Retrieved 3 chunk(s) for 'List the Item 1A risk factors.' (chat=c364c2f3814c4b1999e2d183ee4a32ec)
+2026-08-19 23:50:08 | DEBUG    | graph.nodes | retrieve:69 | Retrieved 2416 chars of context from 3 chunk(s)
+2026-08-19 23:50:08 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 23:50:09 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 16 characters
+2026-08-19 23:50:09 | INFO     | services.router_service | classify:53 | Routed 'List the Item 1A risk factors.' -> risks
+2026-08-19 23:50:09 | DEBUG    | services.router_service | classify:54 | Router raw reply: 'assistant\n\nrisks'
+2026-08-19 23:50:09 | INFO     | graph.nodes | node:116 | Running Risk Factors analysis
+2026-08-19 23:50:09 | DEBUG    | services.analysis_service | analyze:27 | Analyzing category=risks (context=2416 chars, query='List the Item 1A risk factors.')
+2026-08-19 23:50:09 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 2 message(s)
+2026-08-19 23:50:20 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 3486 characters
+2026-08-19 23:50:20 | INFO     | services.analysis_service | analyze:34 | Analysis complete: category=risks, answer=3486 chars
+2026-08-19 23:50:20 | INFO     | services.chat_service | query_stream:115 | Run 10efa23ed8cd4562aa1d8c34a95a0851 finished (category=risks)
+2026-08-19 23:50:21 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting mock_10k_filing.txt (2417 bytes) into chat 5f28a1f714074e13a9b61e85f226dbd1
+2026-08-19 23:50:21 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat 5f28a1f714074e13a9b61e85f226dbd1
+2026-08-19 23:50:21 | INFO     | services.vector_service | ingest_file:90 | Ingested mock_10k_filing.txt -> 3 chunks (chat=5f28a1f714074e13a9b61e85f226dbd1)
+2026-08-19 23:50:21 | INFO     | main | upload_file:98 | Uploaded mock_10k_filing.txt -> 3 chunks
+2026-08-19 23:50:21 | INFO     | api.socket_handler | query:61 | Query from w2y6EoNLHtKjxLiyAAAH (chat=5f28a1f714074e13a9b61e85f226dbd1): 'Who sits on the board and how are they paid?'
+2026-08-19 23:50:21 | INFO     | services.chat_service | query_stream:86 | Run a904268dda89427b952600a04aa1c346 started: 'Who sits on the board and how are they paid?' (session=5f28a1f714074e13a9b61e85f226dbd1)
+2026-08-19 23:50:21 | INFO     | services.vector_service | search:104 | Retrieved 3 chunk(s) for 'Who sits on the board and how are they paid?' (chat=5f28a1f714074e13a9b61e85f226dbd1)
+2026-08-19 23:50:21 | DEBUG    | graph.nodes | retrieve:69 | Retrieved 2416 chars of context from 3 chunk(s)
+2026-08-19 23:50:21 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 23:50:21 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 23:50:21 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 28 characters
+2026-08-19 23:50:21 | INFO     | services.router_service | name_chat:80 | Named 'Who sits on the board and how are they paid?' -> 'assistant'
+2026-08-19 23:50:21 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 21 characters
+2026-08-19 23:50:21 | INFO     | services.router_service | classify:53 | Routed 'Who sits on the board and how are they paid?' -> governance
+2026-08-19 23:50:21 | DEBUG    | services.router_service | classify:54 | Router raw reply: 'assistant\n\ngovernance'
+2026-08-19 23:50:21 | INFO     | graph.nodes | node:116 | Running Governance analysis
+2026-08-19 23:50:21 | DEBUG    | services.analysis_service | analyze:27 | Analyzing category=governance (context=2416 chars, query='Who sits on the board and how are they paid?')
+2026-08-19 23:50:21 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 2 message(s)
+2026-08-19 23:50:35 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 3157 characters
+2026-08-19 23:50:35 | INFO     | services.analysis_service | analyze:34 | Analysis complete: category=governance, answer=3157 chars
+2026-08-19 23:50:35 | INFO     | services.chat_service | query_stream:115 | Run a904268dda89427b952600a04aa1c346 finished (category=governance)
+2026-08-19 23:50:36 | INFO     | services.vector_service | delete_session:118 | Deleted filings for chat c364c2f3814c4b1999e2d183ee4a32ec
+2026-08-19 23:50:37 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: w2y6EoNLHtKjxLiyAAAH
+2026-08-19 23:50:53 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: rwmsXBlhU1jjz_0_AAAB
+2026-08-19 23:51:13 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-19 23:51:13 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-19 23:51:13 | INFO     | services.vector_service | _drop_stale_collections:155 | Cleared 1 orphaned chat collection(s) from disk
+2026-08-19 23:51:13 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-19 23:51:13 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-19 23:51:13 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-19 23:51:13 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-19 23:51:13 | INFO     | services.chat_service | __init__:42 | ChatService ready
+2026-08-19 23:51:13 | INFO     | main | <module>:117 | Backend ready — HTTP + Socket.IO mounted
+2026-08-19 23:51:18 | INFO     | api.socket_handler | connect:24 | Client connected: 0ygfdZHzO58Z6Nf5AAAB
+2026-08-19 23:51:24 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: 0ygfdZHzO58Z6Nf5AAAB
+2026-08-19 23:51:24 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 17871625983220.2522005520093321
+2026-08-19 23:51:24 | INFO     | api.socket_handler | connect:24 | Client connected: PznmUQQrX8HUJYX3AAAD
+2026-08-19 23:51:26 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: PznmUQQrX8HUJYX3AAAD
+2026-08-19 23:51:26 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 17871636844970.9228939480619315
+2026-08-19 23:51:27 | INFO     | api.socket_handler | connect:24 | Client connected: e0Kwh5SfP8sDMdvWAAAF
+2026-08-19 23:51:27 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: e0Kwh5SfP8sDMdvWAAAF
+2026-08-19 23:51:27 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 17871636869780.09755255766415916
+2026-08-19 23:51:27 | INFO     | api.socket_handler | connect:24 | Client connected: 5T4k-XJmiOEELLx9AAAH
+2026-08-19 23:51:28 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: 5T4k-XJmiOEELLx9AAAH
+2026-08-19 23:51:28 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 17871636879350.9373311115317919
+2026-08-19 23:51:28 | INFO     | api.socket_handler | connect:24 | Client connected: xMlYdHZ4YLPrQw88AAAJ
+2026-08-19 23:51:30 | INFO     | api.socket_handler | connect:24 | Client connected: Izanq0dqA-8mnwXHAAAL
+2026-08-19 23:51:30 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting mock_10k_filing.txt (2417 bytes) into chat 545fb3642c1d4ef2824c7d0354024a54
+2026-08-19 23:51:31 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat 545fb3642c1d4ef2824c7d0354024a54
+2026-08-19 23:51:31 | INFO     | services.vector_service | ingest_file:90 | Ingested mock_10k_filing.txt -> 3 chunks (chat=545fb3642c1d4ef2824c7d0354024a54)
+2026-08-19 23:51:31 | INFO     | main | upload_file:98 | Uploaded mock_10k_filing.txt -> 3 chunks
+2026-08-19 23:51:31 | INFO     | api.socket_handler | query:61 | Query from Izanq0dqA-8mnwXHAAAL (chat=545fb3642c1d4ef2824c7d0354024a54): 'What was total revenue and net income for fiscal 2024?'
+2026-08-19 23:51:31 | INFO     | services.chat_service | query_stream:86 | Run fdb3ede991e843e999f423bf71b84216 started: 'What was total revenue and net income for fiscal 2024?' (session=545fb3642c1d4ef2824c7d0354024a54)
+2026-08-19 23:51:31 | INFO     | services.vector_service | search:104 | Retrieved 3 chunk(s) for 'What was total revenue and net income for fiscal 2' (chat=545fb3642c1d4ef2824c7d0354024a54)
+2026-08-19 23:51:31 | DEBUG    | graph.nodes | retrieve:69 | Retrieved 2416 chars of context from 3 chunk(s)
+2026-08-19 23:51:31 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 23:51:31 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 23:51:31 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 21 characters
+2026-08-19 23:51:31 | INFO     | services.router_service | classify:58 | Routed 'What was total revenue and net income for fiscal 2024?' -> financials
+2026-08-19 23:51:31 | DEBUG    | services.router_service | classify:59 | Router raw reply: 'assistant\n\nfinancials'
+2026-08-19 23:51:31 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 41 characters
+2026-08-19 23:51:31 | INFO     | services.router_service | name_chat:85 | Named 'What was total revenue and net income for fiscal 2024?' -> 'Revenue and Net Income Dossier'
+2026-08-19 23:51:31 | INFO     | graph.nodes | node:116 | Running Financials analysis
+2026-08-19 23:51:31 | DEBUG    | services.analysis_service | analyze:27 | Analyzing category=financials (context=2416 chars, query='What was total revenue and net income for fiscal 2024?')
+2026-08-19 23:51:31 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 2 message(s)
+2026-08-19 23:51:41 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 1987 characters
+2026-08-19 23:51:41 | INFO     | services.analysis_service | analyze:34 | Analysis complete: category=financials, answer=1987 chars
+2026-08-19 23:51:41 | INFO     | services.chat_service | query_stream:115 | Run fdb3ede991e843e999f423bf71b84216 finished (category=financials)
+2026-08-19 23:51:41 | INFO     | api.socket_handler | query:61 | Query from Izanq0dqA-8mnwXHAAAL (chat=545fb3642c1d4ef2824c7d0354024a54): 'List the Item 1A risk factors.'
+2026-08-19 23:51:41 | INFO     | services.chat_service | query_stream:86 | Run f75bfc2335bf41dcbaca215694646ba2 started: 'List the Item 1A risk factors.' (session=545fb3642c1d4ef2824c7d0354024a54)
+2026-08-19 23:51:41 | INFO     | services.vector_service | search:104 | Retrieved 3 chunk(s) for 'List the Item 1A risk factors.' (chat=545fb3642c1d4ef2824c7d0354024a54)
+2026-08-19 23:51:41 | DEBUG    | graph.nodes | retrieve:69 | Retrieved 2416 chars of context from 3 chunk(s)
+2026-08-19 23:51:41 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 23:51:41 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 16 characters
+2026-08-19 23:51:41 | INFO     | services.router_service | classify:58 | Routed 'List the Item 1A risk factors.' -> risks
+2026-08-19 23:51:41 | DEBUG    | services.router_service | classify:59 | Router raw reply: 'assistant\n\nrisks'
+2026-08-19 23:51:41 | INFO     | graph.nodes | node:116 | Running Risk Factors analysis
+2026-08-19 23:51:41 | DEBUG    | services.analysis_service | analyze:27 | Analyzing category=risks (context=2416 chars, query='List the Item 1A risk factors.')
+2026-08-19 23:51:41 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 2 message(s)
+2026-08-19 23:51:53 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 3706 characters
+2026-08-19 23:51:53 | INFO     | services.analysis_service | analyze:34 | Analysis complete: category=risks, answer=3706 chars
+2026-08-19 23:51:53 | INFO     | services.chat_service | query_stream:115 | Run f75bfc2335bf41dcbaca215694646ba2 finished (category=risks)
+2026-08-19 23:51:54 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting mock_10k_filing.txt (2417 bytes) into chat 3dd0ab7453824054bb91087862d90873
+2026-08-19 23:51:54 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat 3dd0ab7453824054bb91087862d90873
+2026-08-19 23:51:54 | INFO     | services.vector_service | ingest_file:90 | Ingested mock_10k_filing.txt -> 3 chunks (chat=3dd0ab7453824054bb91087862d90873)
+2026-08-19 23:51:54 | INFO     | main | upload_file:98 | Uploaded mock_10k_filing.txt -> 3 chunks
+2026-08-19 23:51:54 | INFO     | api.socket_handler | query:61 | Query from Izanq0dqA-8mnwXHAAAL (chat=3dd0ab7453824054bb91087862d90873): 'Who sits on the board and how are they paid?'
+2026-08-19 23:51:54 | INFO     | services.chat_service | query_stream:86 | Run e63159384f2444a69120452ec2f9a240 started: 'Who sits on the board and how are they paid?' (session=3dd0ab7453824054bb91087862d90873)
+2026-08-19 23:51:54 | INFO     | services.vector_service | search:104 | Retrieved 3 chunk(s) for 'Who sits on the board and how are they paid?' (chat=3dd0ab7453824054bb91087862d90873)
+2026-08-19 23:51:54 | DEBUG    | graph.nodes | retrieve:69 | Retrieved 2416 chars of context from 3 chunk(s)
+2026-08-19 23:51:54 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 23:51:54 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 23:51:55 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 28 characters
+2026-08-19 23:51:55 | INFO     | services.router_service | name_chat:85 | Named 'Who sits on the board and how are they paid?' -> 'Board Composition'
+2026-08-19 23:51:55 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 21 characters
+2026-08-19 23:51:55 | INFO     | services.router_service | classify:58 | Routed 'Who sits on the board and how are they paid?' -> governance
+2026-08-19 23:51:55 | DEBUG    | services.router_service | classify:59 | Router raw reply: 'assistant\n\ngovernance'
+2026-08-19 23:51:55 | INFO     | graph.nodes | node:116 | Running Governance analysis
+2026-08-19 23:51:55 | DEBUG    | services.analysis_service | analyze:27 | Analyzing category=governance (context=2416 chars, query='Who sits on the board and how are they paid?')
+2026-08-19 23:51:55 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 2 message(s)
+2026-08-19 23:52:08 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 3157 characters
+2026-08-19 23:52:08 | INFO     | services.analysis_service | analyze:34 | Analysis complete: category=governance, answer=3157 chars
+2026-08-19 23:52:08 | INFO     | services.chat_service | query_stream:115 | Run e63159384f2444a69120452ec2f9a240 finished (category=governance)
+2026-08-19 23:52:09 | INFO     | services.vector_service | delete_session:118 | Deleted filings for chat 545fb3642c1d4ef2824c7d0354024a54
+2026-08-19 23:52:11 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: Izanq0dqA-8mnwXHAAAL
+2026-08-19 23:52:36 | INFO     | api.socket_handler | connect:24 | Client connected: zhTL2TBnw18wHQuGAAAN
+2026-08-19 23:52:39 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: zhTL2TBnw18wHQuGAAAN
+2026-08-19 23:53:34 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting f.txt (2417 bytes) into chat prefix-check
+2026-08-19 23:53:34 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat prefix-check
+2026-08-19 23:53:35 | INFO     | services.vector_service | ingest_file:90 | Ingested f.txt -> 3 chunks (chat=prefix-check)
+2026-08-19 23:53:35 | INFO     | main | upload_file:98 | Uploaded f.txt -> 3 chunks
+2026-08-19 23:53:35 | INFO     | api.socket_handler | connect:24 | Client connected: 86tFykIqCL21WWVDAAAP
+2026-08-19 23:53:35 | INFO     | api.socket_handler | query:61 | Query from 86tFykIqCL21WWVDAAAP (chat=prefix-check): 'What was total revenue?'
+2026-08-19 23:53:35 | INFO     | services.chat_service | query_stream:86 | Run 03240579332a4c04950f8fc8de7183c6 started: 'What was total revenue?' (session=prefix-check)
+2026-08-19 23:53:35 | INFO     | services.vector_service | search:104 | Retrieved 3 chunk(s) for 'What was total revenue?' (chat=prefix-check)
+2026-08-19 23:53:35 | DEBUG    | graph.nodes | retrieve:69 | Retrieved 2416 chars of context from 3 chunk(s)
+2026-08-19 23:53:35 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 23:53:35 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 21 characters
+2026-08-19 23:53:35 | INFO     | services.router_service | classify:58 | Routed 'What was total revenue?' -> financials
+2026-08-19 23:53:35 | DEBUG    | services.router_service | classify:59 | Router raw reply: 'assistant\n\nfinancials'
+2026-08-19 23:53:35 | INFO     | graph.nodes | node:116 | Running Financials analysis
+2026-08-19 23:53:35 | DEBUG    | services.analysis_service | analyze:27 | Analyzing category=financials (context=2416 chars, query='What was total revenue?')
+2026-08-19 23:53:35 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 2 message(s)
+2026-08-19 23:53:44 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 1748 characters
+2026-08-19 23:53:44 | INFO     | services.analysis_service | analyze:34 | Analysis complete: category=financials, answer=1748 chars
+2026-08-19 23:53:44 | INFO     | services.chat_service | query_stream:115 | Run 03240579332a4c04950f8fc8de7183c6 finished (category=financials)
+2026-08-19 23:53:44 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: 86tFykIqCL21WWVDAAAP
+2026-08-19 23:53:44 | INFO     | services.vector_service | delete_session:118 | Deleted filings for chat prefix-check
+2026-08-19 23:56:24 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: xMlYdHZ4YLPrQw88AAAJ
+2026-08-19 23:56:24 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 17871636886030.6565966554353964
+2026-08-19 23:56:24 | INFO     | api.socket_handler | connect:24 | Client connected: 9i-3LfsjskZIvuWlAAAR
+2026-08-19 23:56:43 | DEBUG    | services.vector_service | ingest_file:70 | Ingesting mock_10k_filing.txt (2417 bytes) into chat 17871639848390.44688999096332493
+2026-08-19 23:56:43 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat 17871639848390.44688999096332493
+2026-08-19 23:56:44 | INFO     | services.vector_service | ingest_file:90 | Ingested mock_10k_filing.txt -> 3 chunks (chat=17871639848390.44688999096332493)
+2026-08-19 23:56:44 | INFO     | main | upload_file:98 | Uploaded mock_10k_filing.txt -> 3 chunks
+2026-08-19 23:56:44 | INFO     | api.socket_handler | query:61 | Query from 9i-3LfsjskZIvuWlAAAR (chat=17871639848390.44688999096332493): 'what is the revenue in fy 2024?'
+2026-08-19 23:56:44 | INFO     | services.chat_service | query_stream:86 | Run c5ecad2af07747a3aca803dd3d57594e started: 'what is the revenue in fy 2024?' (session=17871639848390.44688999096332493)
+2026-08-19 23:56:44 | INFO     | services.vector_service | search:104 | Retrieved 3 chunk(s) for 'what is the revenue in fy 2024?' (chat=17871639848390.44688999096332493)
+2026-08-19 23:56:44 | DEBUG    | graph.nodes | retrieve:69 | Retrieved 2416 chars of context from 3 chunk(s)
+2026-08-19 23:56:44 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 23:56:44 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 23:56:46 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 21 characters
+2026-08-19 23:56:46 | INFO     | services.router_service | classify:58 | Routed 'what is the revenue in fy 2024?' -> financials
+2026-08-19 23:56:46 | DEBUG    | services.router_service | classify:59 | Router raw reply: 'assistant\n\nfinancials'
+2026-08-19 23:56:49 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 38 characters
+2026-08-19 23:56:49 | INFO     | services.router_service | name_chat:85 | Named 'what is the revenue in fy 2024?' -> 'Revenue Projections Dossier'
+2026-08-19 23:56:49 | INFO     | graph.nodes | node:116 | Running Financials analysis
+2026-08-19 23:56:49 | DEBUG    | services.analysis_service | analyze:27 | Analyzing category=financials (context=2416 chars, query='what is the revenue in fy 2024?')
+2026-08-19 23:56:49 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 2 message(s)
+2026-08-19 23:58:42 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 2184 characters
+2026-08-19 23:58:42 | INFO     | services.analysis_service | analyze:34 | Analysis complete: category=financials, answer=2184 chars
+2026-08-19 23:58:42 | INFO     | services.chat_service | query_stream:115 | Run c5ecad2af07747a3aca803dd3d57594e finished (category=financials)
+2026-08-19 23:59:19 | INFO     | api.socket_handler | query:61 | Query from 9i-3LfsjskZIvuWlAAAR (chat=17871639848390.44688999096332493): 'what are the risks involved?'
+2026-08-19 23:59:19 | INFO     | services.chat_service | query_stream:86 | Run 64d9a107d12d479d8d9fbcfa887c21cc started: 'what are the risks involved?' (session=17871639848390.44688999096332493)
+2026-08-19 23:59:19 | INFO     | services.vector_service | search:104 | Retrieved 3 chunk(s) for 'what are the risks involved?' (chat=17871639848390.44688999096332493)
+2026-08-19 23:59:19 | DEBUG    | graph.nodes | retrieve:69 | Retrieved 2416 chars of context from 3 chunk(s)
+2026-08-19 23:59:19 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 1 message(s)
+2026-08-19 23:59:21 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 16 characters
+2026-08-19 23:59:21 | INFO     | services.router_service | classify:58 | Routed 'what are the risks involved?' -> risks
+2026-08-19 23:59:21 | DEBUG    | services.router_service | classify:59 | Router raw reply: 'assistant\n\nrisks'
+2026-08-19 23:59:21 | INFO     | graph.nodes | node:116 | Running Risk Factors analysis
+2026-08-19 23:59:21 | DEBUG    | services.analysis_service | analyze:27 | Analyzing category=risks (context=2416 chars, query='what are the risks involved?')
+2026-08-19 23:59:21 | DEBUG    | services.llm_service | ainvoke:39 | LLM call with 2 message(s)
+2026-08-20 00:01:33 | DEBUG    | services.llm_service | ainvoke:43 | LLM replied with 4269 characters
+2026-08-20 00:01:33 | INFO     | services.analysis_service | analyze:34 | Analysis complete: category=risks, answer=4269 chars
+2026-08-20 00:01:33 | INFO     | services.chat_service | query_stream:115 | Run 64d9a107d12d479d8d9fbcfa887c21cc finished (category=risks)
+2026-08-20 00:19:46 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: 9i-3LfsjskZIvuWlAAAR
+2026-08-20 00:19:46 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 17871643347390.568748164356506
+2026-08-20 00:19:46 | INFO     | services.vector_service | delete_session:118 | Deleted filings for chat 17871639848390.44688999096332493
+2026-08-20 00:19:46 | INFO     | api.socket_handler | connect:24 | Client connected: ODXr1imMtSpO-ZhSAAAT
+2026-08-20 00:19:50 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: ODXr1imMtSpO-ZhSAAAT
+2026-08-20 00:19:50 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 17871653867450.5791091979635528
+2026-08-20 00:19:50 | INFO     | api.socket_handler | connect:24 | Client connected: KgtqQ85W1-btw3SNAAAV
+2026-08-20 01:01:14 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: KgtqQ85W1-btw3SNAAAV
+2026-08-20 01:01:15 | INFO     | api.socket_handler | connect:24 | Client connected: y0-N3lH4mDe28vEFAAAX
+2026-08-20 07:33:53 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: y0-N3lH4mDe28vEFAAAX
+2026-08-20 07:33:53 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 17871653907480.30826832747356625
+2026-08-20 07:33:53 | INFO     | api.socket_handler | connect:24 | Client connected: 0i8q_gv4wsu7SlT9AAAZ
+2026-08-20 07:52:42 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: 0i8q_gv4wsu7SlT9AAAZ
+2026-08-20 07:52:42 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 17871914334620.42482046090322434
+2026-08-20 07:52:42 | INFO     | api.socket_handler | connect:24 | Client connected: MX2OTa29aftzKgReAAAb
+2026-08-20 07:57:49 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: MX2OTa29aftzKgReAAAb
+2026-08-20 07:57:49 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 17871925627140.3593744820922018
+2026-08-20 07:57:49 | INFO     | api.socket_handler | connect:24 | Client connected: IIQ5ZAK9474TKYGlAAAd
+2026-08-20 08:01:33 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: IIQ5ZAK9474TKYGlAAAd
+2026-08-20 08:01:33 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 17871928692760.34014710355116307
+2026-08-20 08:01:33 | INFO     | api.socket_handler | connect:24 | Client connected: Us5N9ZqDFzcgvKQrAAAf
+2026-08-20 08:01:38 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: Us5N9ZqDFzcgvKQrAAAf
+2026-08-20 08:01:38 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 17871930938670.5687684416487607
+2026-08-20 08:01:38 | INFO     | api.socket_handler | connect:24 | Client connected: lXDbIGOg7XZxI1jhAAAh
+2026-08-20 08:01:39 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: lXDbIGOg7XZxI1jhAAAh
+2026-08-20 08:01:39 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 17871930987660.36066678708539524
+2026-08-20 08:01:39 | INFO     | api.socket_handler | connect:24 | Client connected: dFU3TAAQBem5aRjgAAAj
+2026-08-20 08:01:40 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: dFU3TAAQBem5aRjgAAAj
+2026-08-20 08:01:40 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 17871930996940.1253144172571492
+2026-08-20 08:01:40 | INFO     | api.socket_handler | connect:24 | Client connected: 4glspiHVdGKM852gAAAl
+2026-08-20 17:35:17 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: 4glspiHVdGKM852gAAAl
+2026-08-20 17:43:19 | INFO     | api.socket_handler | connect:24 | Client connected: 7Ue683MeC02wnJiZAAAn
+2026-08-20 18:23:57 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: 7Ue683MeC02wnJiZAAAn
+2026-08-20 18:56:37 | INFO     | api.socket_handler | connect:24 | Client connected: PAMO9eLgHxZxU7FwAAAp
+2026-08-20 19:34:02 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: PAMO9eLgHxZxU7FwAAAp
+2026-08-20 19:48:08 | INFO     | api.socket_handler | connect:24 | Client connected: 4dRk1VCb47x4coUsAAAr
+2026-08-20 20:07:11 | INFO     | api.socket_handler | disconnect:28 | Client disconnected: 4dRk1VCb47x4coUsAAAr
+2026-08-21 08:49:10 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 08:49:11 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 08:49:11 | INFO     | services.vector_service | _drop_stale_collections:155 | Cleared 1 orphaned chat collection(s) from disk
+2026-08-21 08:49:11 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 08:49:11 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 08:49:11 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 08:49:11 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 08:49:11 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 08:49:11 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 08:49:32 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 08:49:33 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 08:49:33 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 08:49:33 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 08:49:33 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 08:49:33 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 08:49:33 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 08:49:33 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 08:49:42 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 08:49:42 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 08:49:42 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 08:49:42 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 08:49:42 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 08:49:42 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 08:49:42 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 08:49:42 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 08:50:35 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 08:50:35 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 08:50:36 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 08:50:36 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 08:50:36 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 08:50:36 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 08:50:36 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 08:50:36 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 08:50:36 | INFO     | core.database | init_db:72 | Database ready (sqlite+aiosqlite:////tmp/tmpqsq8nj8z.db)
+2026-08-21 08:50:36 | INFO     | services.auth_service | signup:75 | Account created: ann@example.com (972f58ac35c5452a86bacee0b681b438)
+2026-08-21 08:50:36 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 972f58ac35c5452a86bacee0b681b438:s1
+2026-08-21 08:50:36 | INFO     | services.auth_service | login:97 | Failed login for ann@example.com
+2026-08-21 08:50:37 | INFO     | services.auth_service | login:104 | Login: ann@example.com (972f58ac35c5452a86bacee0b681b438)
+2026-08-21 08:50:37 | DEBUG    | services.auth_service | refresh:144 | Rotated refresh token for 972f58ac35c5452a86bacee0b681b438
+2026-08-21 08:50:37 | WARNING  | services.auth_service | refresh:131 | Reused refresh token for user 972f58ac35c5452a86bacee0b681b438 — all sessions revoked
+2026-08-21 08:50:37 | WARNING  | services.auth_service | refresh:131 | Reused refresh token for user 972f58ac35c5452a86bacee0b681b438 — all sessions revoked
+2026-08-21 08:50:37 | WARNING  | services.auth_service | refresh:131 | Reused refresh token for user 972f58ac35c5452a86bacee0b681b438 — all sessions revoked
+2026-08-21 08:50:37 | INFO     | services.auth_service | login:104 | Login: ann@example.com (972f58ac35c5452a86bacee0b681b438)
+2026-08-21 08:50:37 | WARNING  | services.auth_service | refresh:131 | Reused refresh token for user 972f58ac35c5452a86bacee0b681b438 — all sessions revoked
+2026-08-21 08:51:12 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 08:51:12 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 08:51:12 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 08:51:12 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 08:51:12 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 08:51:12 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 08:51:12 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 08:51:12 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 08:51:12 | INFO     | core.database | init_db:72 | Database ready (sqlite+aiosqlite:////tmp/tmpd8yyv2ge.db)
+2026-08-21 08:51:12 | INFO     | core.database | init_db:72 | Database ready (sqlite+aiosqlite:////tmp/tmpd8yyv2ge.db)
+2026-08-21 08:51:13 | INFO     | services.auth_service | signup:75 | Account created: s@e.com (864e426c8f804d1f9d86533ffeb32940)
+2026-08-21 08:51:13 | INFO     | api.socket_handler | connect:46 | Handshake from syEEwm3t_X56_udVAAAB refused — no token
+2026-08-21 08:51:13 | INFO     | api.socket_handler | connect:53 | Handshake from YdekRuJOcdf-byCxAAAD refused — Token is not valid.
+2026-08-21 08:51:13 | INFO     | api.socket_handler | connect:57 | Client connected: QRyzmrGYcQZ_Qy02AAAF (user=s@e.com)
+2026-08-21 08:51:13 | INFO     | api.socket_handler | disconnect:61 | Client disconnected: QRyzmrGYcQZ_Qy02AAAF
+2026-08-21 08:55:51 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 08:55:52 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 08:55:52 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 08:55:52 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 08:55:52 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 08:55:52 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 08:55:52 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 08:55:52 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 08:55:52 | INFO     | core.database | init_db:72 | Database ready (sqlite+aiosqlite:////tmp/cfa_test.db)
+2026-08-21 08:56:42 | INFO     | services.auth_service | signup:75 | Account created: ada@analytics.io (5005dc69568443b8870d69cc5e907d0a)
+2026-08-21 08:56:42 | INFO     | api.socket_handler | connect:57 | Client connected: rcKbCGdgqg6P-j7SAAAB (user=ada@analytics.io)
+2026-08-21 08:56:50 | INFO     | api.socket_handler | disconnect:61 | Client disconnected: rcKbCGdgqg6P-j7SAAAB
+2026-08-21 08:57:03 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 08:57:04 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 08:57:04 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 08:57:04 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 08:57:04 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 08:57:04 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 08:57:04 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 08:57:04 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 08:57:04 | INFO     | core.database | init_db:72 | Database ready (sqlite+aiosqlite:////tmp/cfa_test.db)
+2026-08-21 08:57:10 | INFO     | services.auth_service | signup:75 | Account created: ada@analytics.io (84d58e89395c4f91852a51e2d67dd316)
+2026-08-21 08:57:10 | INFO     | api.socket_handler | connect:57 | Client connected: e_NpuUoDMu78PupiAAAB (user=ada@analytics.io)
+2026-08-21 08:57:12 | INFO     | api.socket_handler | disconnect:61 | Client disconnected: e_NpuUoDMu78PupiAAAB
+2026-08-21 08:57:12 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 84d58e89395c4f91852a51e2d67dd316:8463c8dace6544fbb0f3c198f9b2782a
+2026-08-21 08:57:12 | DEBUG    | services.auth_service | refresh:144 | Rotated refresh token for 84d58e89395c4f91852a51e2d67dd316
+2026-08-21 08:57:12 | INFO     | api.socket_handler | connect:57 | Client connected: s8Y08V8vqs4665QjAAAD (user=ada@analytics.io)
+2026-08-21 08:57:14 | INFO     | api.socket_handler | query:108 | Query from s8Y08V8vqs4665QjAAAD (chat=d43831b56f6f4546a244685e903178c2): 'hello'
+2026-08-21 08:57:14 | INFO     | services.chat_service | query_stream:98 | Run 1437549fb7bc487a8e379567fc72df0b started: 'hello' (session=84d58e89395c4f91852a51e2d67dd316:d43831b56f6f4546a244685e903178c2)
+2026-08-21 08:57:14 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat 84d58e89395c4f91852a51e2d67dd316:d43831b56f6f4546a244685e903178c2
+2026-08-21 08:57:16 | INFO     | services.vector_service | search:104 | Retrieved 0 chunk(s) for 'hello' (chat=84d58e89395c4f91852a51e2d67dd316:d43831b56f6f4546a244685e903178c2)
+2026-08-21 08:57:16 | DEBUG    | graph.nodes | retrieve:69 | Retrieved 0 chars of context from 0 chunk(s)
+2026-08-21 08:57:16 | INFO     | graph.nodes | no_filing:78 | No filing in this chat — asking for one instead of answering
+2026-08-21 08:57:16 | INFO     | services.chat_service | query_stream:127 | Run 1437549fb7bc487a8e379567fc72df0b finished (category=qa)
+2026-08-21 08:57:18 | INFO     | api.socket_handler | disconnect:61 | Client disconnected: s8Y08V8vqs4665QjAAAD
+2026-08-21 08:57:18 | INFO     | services.vector_service | delete_session:118 | Deleted filings for chat 84d58e89395c4f91852a51e2d67dd316:d43831b56f6f4546a244685e903178c2
+2026-08-21 08:57:19 | WARNING  | services.auth_service | refresh:131 | Reused refresh token for user 84d58e89395c4f91852a51e2d67dd316 — all sessions revoked
+2026-08-21 08:57:20 | INFO     | services.auth_service | login:104 | Login: ada@analytics.io (84d58e89395c4f91852a51e2d67dd316)
+2026-08-21 08:57:20 | INFO     | api.socket_handler | connect:57 | Client connected: 1rsGLbnU2aXfxheFAAAF (user=ada@analytics.io)
+2026-08-21 08:57:20 | INFO     | api.socket_handler | disconnect:61 | Client disconnected: 1rsGLbnU2aXfxheFAAAF
+2026-08-21 08:57:20 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 84d58e89395c4f91852a51e2d67dd316:9b3863ca715747a9b416dda51a9135c2
+2026-08-21 08:57:40 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 08:57:40 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 08:57:40 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 08:57:40 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 08:57:40 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 08:57:40 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 08:57:40 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 08:57:40 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 08:57:40 | INFO     | core.database | init_db:72 | Database ready (sqlite+aiosqlite:////tmp/cfa_test.db)
+2026-08-21 08:57:47 | INFO     | services.auth_service | signup:75 | Account created: ada@analytics.io (59878196464c4601a879b020d0e83ec8)
+2026-08-21 08:57:47 | INFO     | api.socket_handler | connect:57 | Client connected: m6njaQ-z2H2AEEGxAAAB (user=ada@analytics.io)
+2026-08-21 08:57:49 | INFO     | api.socket_handler | disconnect:61 | Client disconnected: m6njaQ-z2H2AEEGxAAAB
+2026-08-21 08:57:49 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 59878196464c4601a879b020d0e83ec8:a1bf8e7361c24935b786ffaa5c272bfe
+2026-08-21 08:57:49 | DEBUG    | services.auth_service | refresh:144 | Rotated refresh token for 59878196464c4601a879b020d0e83ec8
+2026-08-21 08:57:49 | INFO     | api.socket_handler | connect:57 | Client connected: Eyzkp67LPwmkSrWIAAAD (user=ada@analytics.io)
+2026-08-21 08:57:51 | INFO     | api.socket_handler | query:108 | Query from Eyzkp67LPwmkSrWIAAAD (chat=09956c913eed4cd09584f1d6d56dd497): 'hello'
+2026-08-21 08:57:51 | INFO     | services.chat_service | query_stream:98 | Run 43a05470f5794096a78369de3d06a14c started: 'hello' (session=59878196464c4601a879b020d0e83ec8:09956c913eed4cd09584f1d6d56dd497)
+2026-08-21 08:57:51 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat 59878196464c4601a879b020d0e83ec8:09956c913eed4cd09584f1d6d56dd497
+2026-08-21 08:57:51 | INFO     | services.vector_service | search:104 | Retrieved 0 chunk(s) for 'hello' (chat=59878196464c4601a879b020d0e83ec8:09956c913eed4cd09584f1d6d56dd497)
+2026-08-21 08:57:51 | DEBUG    | graph.nodes | retrieve:69 | Retrieved 0 chars of context from 0 chunk(s)
+2026-08-21 08:57:51 | INFO     | graph.nodes | no_filing:78 | No filing in this chat — asking for one instead of answering
+2026-08-21 08:57:51 | INFO     | services.chat_service | query_stream:127 | Run 43a05470f5794096a78369de3d06a14c finished (category=qa)
+2026-08-21 08:57:55 | INFO     | api.socket_handler | disconnect:61 | Client disconnected: Eyzkp67LPwmkSrWIAAAD
+2026-08-21 08:57:55 | INFO     | services.vector_service | delete_session:118 | Deleted filings for chat 59878196464c4601a879b020d0e83ec8:09956c913eed4cd09584f1d6d56dd497
+2026-08-21 08:57:56 | WARNING  | services.auth_service | refresh:131 | Reused refresh token for user 59878196464c4601a879b020d0e83ec8 — all sessions revoked
+2026-08-21 08:57:56 | INFO     | services.auth_service | login:104 | Login: ada@analytics.io (59878196464c4601a879b020d0e83ec8)
+2026-08-21 08:57:56 | INFO     | api.socket_handler | connect:57 | Client connected: JSStjo8Hq1YTwgVeAAAF (user=ada@analytics.io)
+2026-08-21 08:57:56 | INFO     | api.socket_handler | disconnect:61 | Client disconnected: JSStjo8Hq1YTwgVeAAAF
+2026-08-21 08:57:56 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 59878196464c4601a879b020d0e83ec8:54f641e8d6694f36bd8055eeca1d4d18
+2026-08-21 09:02:50 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 09:02:50 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 09:02:50 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 09:02:50 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 09:02:50 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 09:02:50 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 09:02:50 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 09:02:50 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 09:02:50 | INFO     | core.database | init_db:72 | Database ready (sqlite+aiosqlite:////tmp/tmpkmror795.db)
+2026-08-21 09:02:51 | INFO     | services.auth_service | signup:75 | Account created: ann@example.com (d2793527055e499ab8994e5f6bb64217)
+2026-08-21 09:02:51 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat d2793527055e499ab8994e5f6bb64217:s1
+2026-08-21 09:02:51 | INFO     | services.auth_service | login:97 | Failed login for ann@example.com
+2026-08-21 09:02:51 | INFO     | services.auth_service | login:104 | Login: ann@example.com (d2793527055e499ab8994e5f6bb64217)
+2026-08-21 09:02:52 | DEBUG    | services.auth_service | refresh:144 | Rotated refresh token for d2793527055e499ab8994e5f6bb64217
+2026-08-21 09:02:52 | WARNING  | services.auth_service | refresh:131 | Reused refresh token for user d2793527055e499ab8994e5f6bb64217 — all sessions revoked
+2026-08-21 09:02:52 | WARNING  | services.auth_service | refresh:131 | Reused refresh token for user d2793527055e499ab8994e5f6bb64217 — all sessions revoked
+2026-08-21 09:02:52 | WARNING  | services.auth_service | refresh:131 | Reused refresh token for user d2793527055e499ab8994e5f6bb64217 — all sessions revoked
+2026-08-21 09:02:52 | INFO     | services.auth_service | login:104 | Login: ann@example.com (d2793527055e499ab8994e5f6bb64217)
+2026-08-21 09:02:52 | WARNING  | services.auth_service | refresh:131 | Reused refresh token for user d2793527055e499ab8994e5f6bb64217 — all sessions revoked
+2026-08-21 09:02:54 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 09:02:54 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 09:02:54 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 09:02:54 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 09:02:54 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 09:02:54 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 09:02:54 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 09:02:54 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 09:02:54 | INFO     | core.database | init_db:72 | Database ready (sqlite+aiosqlite:////tmp/cfa_test.db)
+2026-08-21 09:03:01 | INFO     | services.auth_service | signup:75 | Account created: ada@analytics.io (223f30e287de4a0f98cf80e9c0196132)
+2026-08-21 09:03:01 | INFO     | api.socket_handler | connect:57 | Client connected: RkPELNG97ik7uESEAAAB (user=ada@analytics.io)
+2026-08-21 09:03:03 | INFO     | api.socket_handler | disconnect:61 | Client disconnected: RkPELNG97ik7uESEAAAB
+2026-08-21 09:03:03 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 223f30e287de4a0f98cf80e9c0196132:b0e34d28acde4e95bc9a6fe0396a3aba
+2026-08-21 09:03:03 | DEBUG    | services.auth_service | refresh:144 | Rotated refresh token for 223f30e287de4a0f98cf80e9c0196132
+2026-08-21 09:03:03 | INFO     | api.socket_handler | connect:57 | Client connected: T_ZpWZ1yD2GfQNDwAAAD (user=ada@analytics.io)
+2026-08-21 09:03:05 | INFO     | api.socket_handler | query:108 | Query from T_ZpWZ1yD2GfQNDwAAAD (chat=dc8f7fff04574edb87e8c53a185642b7): 'hello'
+2026-08-21 09:03:05 | INFO     | services.chat_service | query_stream:98 | Run 734b2f722e7e46d8842871969a5281e5 started: 'hello' (session=223f30e287de4a0f98cf80e9c0196132:dc8f7fff04574edb87e8c53a185642b7)
+2026-08-21 09:03:05 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat 223f30e287de4a0f98cf80e9c0196132:dc8f7fff04574edb87e8c53a185642b7
+2026-08-21 09:03:06 | INFO     | services.vector_service | search:104 | Retrieved 0 chunk(s) for 'hello' (chat=223f30e287de4a0f98cf80e9c0196132:dc8f7fff04574edb87e8c53a185642b7)
+2026-08-21 09:03:06 | DEBUG    | graph.nodes | retrieve:69 | Retrieved 0 chars of context from 0 chunk(s)
+2026-08-21 09:03:06 | INFO     | graph.nodes | no_filing:78 | No filing in this chat — asking for one instead of answering
+2026-08-21 09:03:06 | INFO     | services.chat_service | query_stream:127 | Run 734b2f722e7e46d8842871969a5281e5 finished (category=qa)
+2026-08-21 09:03:09 | INFO     | api.socket_handler | disconnect:61 | Client disconnected: T_ZpWZ1yD2GfQNDwAAAD
+2026-08-21 09:03:09 | INFO     | services.vector_service | delete_session:118 | Deleted filings for chat 223f30e287de4a0f98cf80e9c0196132:dc8f7fff04574edb87e8c53a185642b7
+2026-08-21 09:03:10 | WARNING  | services.auth_service | refresh:131 | Reused refresh token for user 223f30e287de4a0f98cf80e9c0196132 — all sessions revoked
+2026-08-21 09:03:10 | INFO     | services.auth_service | login:104 | Login: ada@analytics.io (223f30e287de4a0f98cf80e9c0196132)
+2026-08-21 09:03:10 | INFO     | api.socket_handler | connect:57 | Client connected: 8fjVWVzsvTJKAlvRAAAF (user=ada@analytics.io)
+2026-08-21 09:03:10 | INFO     | api.socket_handler | disconnect:61 | Client disconnected: 8fjVWVzsvTJKAlvRAAAF
+2026-08-21 09:03:10 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 223f30e287de4a0f98cf80e9c0196132:10be25168bef44e89665f18219a0741a
+2026-08-21 09:07:16 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 09:07:16 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 09:07:16 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 09:07:16 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 09:07:16 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 09:07:16 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 09:07:16 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 09:07:16 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 09:07:16 | INFO     | core.database | init_db:81 | Database ready (sqlite+aiosqlite:////tmp/tmpu7liddj7.db)
+2026-08-21 09:07:41 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 09:07:42 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 09:07:42 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 09:07:42 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 09:07:42 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 09:07:42 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 09:07:42 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 09:07:42 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 09:07:42 | INFO     | core.database | init_db:81 | Database ready (sqlite+aiosqlite:////tmp/tmpyjw8ul66.db)
+2026-08-21 09:07:42 | INFO     | services.auth_service | signup:72 | Account created: ann@example.com (89b61a2db1b3449bb573be76dfe86acb)
+2026-08-21 09:07:43 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 89b61a2db1b3449bb573be76dfe86acb:s1
+2026-08-21 09:07:43 | INFO     | services.auth_service | login:94 | Failed login for ann@example.com
+2026-08-21 09:07:43 | INFO     | services.auth_service | login:101 | Login: ann@example.com (89b61a2db1b3449bb573be76dfe86acb)
+2026-08-21 09:07:43 | DEBUG    | services.auth_service | refresh:141 | Rotated refresh token for 89b61a2db1b3449bb573be76dfe86acb
+2026-08-21 09:07:43 | WARNING  | services.auth_service | refresh:128 | Reused refresh token for user 89b61a2db1b3449bb573be76dfe86acb — all sessions revoked
+2026-08-21 09:07:43 | WARNING  | services.auth_service | refresh:128 | Reused refresh token for user 89b61a2db1b3449bb573be76dfe86acb — all sessions revoked
+2026-08-21 09:07:43 | WARNING  | services.auth_service | refresh:128 | Reused refresh token for user 89b61a2db1b3449bb573be76dfe86acb — all sessions revoked
+2026-08-21 09:07:43 | INFO     | services.auth_service | login:101 | Login: ann@example.com (89b61a2db1b3449bb573be76dfe86acb)
+2026-08-21 09:07:43 | WARNING  | services.auth_service | refresh:128 | Reused refresh token for user 89b61a2db1b3449bb573be76dfe86acb — all sessions revoked
+2026-08-21 09:08:18 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 09:08:18 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 09:08:18 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 09:08:18 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 09:08:18 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 09:08:18 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 09:08:18 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 09:08:18 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 09:08:33 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 09:08:34 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 09:08:34 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 09:08:34 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 09:08:34 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 09:08:34 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 09:08:34 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 09:08:34 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 09:08:34 | INFO     | core.database | init_db:81 | Database ready (sqlite+aiosqlite:////tmp/tmpdc0r3n2c.db)
+2026-08-21 09:08:34 | INFO     | services.auth_service | signup:71 | Account created: ann@example.com (6f5014436cc344bbb3155999bed33dc4)
+2026-08-21 09:08:34 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 6f5014436cc344bbb3155999bed33dc4:s1
+2026-08-21 09:08:34 | INFO     | services.auth_service | login:93 | Failed login for ann@example.com
+2026-08-21 09:08:35 | INFO     | services.auth_service | login:100 | Login: ann@example.com (6f5014436cc344bbb3155999bed33dc4)
+2026-08-21 09:08:35 | DEBUG    | services.auth_service | refresh:140 | Rotated refresh token for 6f5014436cc344bbb3155999bed33dc4
+2026-08-21 09:08:35 | WARNING  | services.auth_service | refresh:127 | Reused refresh token for user 6f5014436cc344bbb3155999bed33dc4 — all sessions revoked
+2026-08-21 09:08:35 | WARNING  | services.auth_service | refresh:127 | Reused refresh token for user 6f5014436cc344bbb3155999bed33dc4 — all sessions revoked
+2026-08-21 09:08:35 | WARNING  | services.auth_service | refresh:127 | Reused refresh token for user 6f5014436cc344bbb3155999bed33dc4 — all sessions revoked
+2026-08-21 09:08:35 | INFO     | services.auth_service | login:100 | Login: ann@example.com (6f5014436cc344bbb3155999bed33dc4)
+2026-08-21 09:08:35 | WARNING  | services.auth_service | refresh:127 | Reused refresh token for user 6f5014436cc344bbb3155999bed33dc4 — all sessions revoked
+2026-08-21 09:08:36 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 09:08:36 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 09:08:37 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 09:08:37 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 09:08:37 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 09:08:37 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 09:08:37 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 09:08:37 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 09:08:37 | INFO     | core.database | init_db:81 | Database ready (sqlite+aiosqlite:////tmp/cfa_test.db)
+2026-08-21 09:08:43 | INFO     | services.auth_service | signup:71 | Account created: ada@analytics.io (7156ce364cde4c7b9938ca8c1b1a00fa)
+2026-08-21 09:08:43 | INFO     | api.socket_handler | connect:57 | Client connected: 6EVzQLDgF7DFstRtAAAB (user=ada@analytics.io)
+2026-08-21 09:08:45 | INFO     | api.socket_handler | disconnect:61 | Client disconnected: 6EVzQLDgF7DFstRtAAAB
+2026-08-21 09:08:45 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 7156ce364cde4c7b9938ca8c1b1a00fa:5d0ac5aceee24ede8f908d0d9ff5371a
+2026-08-21 09:08:45 | DEBUG    | services.auth_service | refresh:140 | Rotated refresh token for 7156ce364cde4c7b9938ca8c1b1a00fa
+2026-08-21 09:08:45 | INFO     | api.socket_handler | connect:57 | Client connected: ReE6LzCbfmuFX3i4AAAD (user=ada@analytics.io)
+2026-08-21 09:08:47 | INFO     | api.socket_handler | query:108 | Query from ReE6LzCbfmuFX3i4AAAD (chat=6bffe7b9e00f482baad4b49fd7d59306): 'hello'
+2026-08-21 09:08:47 | INFO     | services.chat_service | query_stream:98 | Run df8cd73dd4884f6aaca9080207ca6347 started: 'hello' (session=7156ce364cde4c7b9938ca8c1b1a00fa:6bffe7b9e00f482baad4b49fd7d59306)
+2026-08-21 09:08:47 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat 7156ce364cde4c7b9938ca8c1b1a00fa:6bffe7b9e00f482baad4b49fd7d59306
+2026-08-21 09:08:49 | INFO     | services.vector_service | search:104 | Retrieved 0 chunk(s) for 'hello' (chat=7156ce364cde4c7b9938ca8c1b1a00fa:6bffe7b9e00f482baad4b49fd7d59306)
+2026-08-21 09:08:49 | DEBUG    | graph.nodes | retrieve:69 | Retrieved 0 chars of context from 0 chunk(s)
+2026-08-21 09:08:49 | INFO     | graph.nodes | no_filing:78 | No filing in this chat — asking for one instead of answering
+2026-08-21 09:08:49 | INFO     | services.chat_service | query_stream:127 | Run df8cd73dd4884f6aaca9080207ca6347 finished (category=qa)
+2026-08-21 09:08:51 | INFO     | api.socket_handler | disconnect:61 | Client disconnected: ReE6LzCbfmuFX3i4AAAD
+2026-08-21 09:08:51 | INFO     | services.vector_service | delete_session:118 | Deleted filings for chat 7156ce364cde4c7b9938ca8c1b1a00fa:6bffe7b9e00f482baad4b49fd7d59306
+2026-08-21 09:08:52 | WARNING  | services.auth_service | refresh:127 | Reused refresh token for user 7156ce364cde4c7b9938ca8c1b1a00fa — all sessions revoked
+2026-08-21 09:08:53 | INFO     | services.auth_service | login:100 | Login: ada@analytics.io (7156ce364cde4c7b9938ca8c1b1a00fa)
+2026-08-21 09:08:53 | INFO     | api.socket_handler | connect:57 | Client connected: BPD0BwBR7IrMVe_EAAAF (user=ada@analytics.io)
+2026-08-21 09:08:53 | INFO     | api.socket_handler | disconnect:61 | Client disconnected: BPD0BwBR7IrMVe_EAAAF
+2026-08-21 09:08:53 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 7156ce364cde4c7b9938ca8c1b1a00fa:c307bb4b98d8423ea4f37de22678193f
+2026-08-21 09:09:54 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 09:09:55 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 09:09:55 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 09:09:55 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 09:09:55 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 09:09:55 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 09:09:55 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 09:09:55 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 09:09:55 | INFO     | core.database | init_db:81 | Database ready (sqlite+aiosqlite:////tmp/tmpt078qz5v.db)
+2026-08-21 09:09:55 | INFO     | services.auth_service | signup:71 | Account created: ann@example.com (69685c4789774c92993d1f94c4592aa9)
+2026-08-21 09:09:55 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 69685c4789774c92993d1f94c4592aa9:s1
+2026-08-21 09:09:55 | INFO     | services.auth_service | login:93 | Failed login for ann@example.com
+2026-08-21 09:09:56 | INFO     | services.auth_service | login:100 | Login: ann@example.com (69685c4789774c92993d1f94c4592aa9)
+2026-08-21 09:09:56 | DEBUG    | services.auth_service | refresh:140 | Rotated refresh token for 69685c4789774c92993d1f94c4592aa9
+2026-08-21 09:09:56 | WARNING  | services.auth_service | refresh:127 | Reused refresh token for user 69685c4789774c92993d1f94c4592aa9 — all sessions revoked
+2026-08-21 09:09:56 | WARNING  | services.auth_service | refresh:127 | Reused refresh token for user 69685c4789774c92993d1f94c4592aa9 — all sessions revoked
+2026-08-21 09:09:56 | WARNING  | services.auth_service | refresh:127 | Reused refresh token for user 69685c4789774c92993d1f94c4592aa9 — all sessions revoked
+2026-08-21 09:09:56 | INFO     | services.auth_service | login:100 | Login: ann@example.com (69685c4789774c92993d1f94c4592aa9)
+2026-08-21 09:09:56 | WARNING  | services.auth_service | refresh:127 | Reused refresh token for user 69685c4789774c92993d1f94c4592aa9 — all sessions revoked
+2026-08-21 09:09:57 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 09:09:57 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 09:09:57 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 09:09:57 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 09:09:57 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 09:09:57 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 09:09:57 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 09:09:57 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 09:09:58 | INFO     | core.database | init_db:81 | Database ready (sqlite+aiosqlite:////tmp/tmpkttd8dwi.db)
+2026-08-21 09:09:58 | INFO     | services.auth_service | signup:71 | Account created: ann@example.com (a82bc88be010455c976cf7f7bad911ff)
+2026-08-21 09:09:58 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat a82bc88be010455c976cf7f7bad911ff:s1
+2026-08-21 09:09:58 | INFO     | services.auth_service | login:93 | Failed login for ann@example.com
+2026-08-21 09:09:59 | INFO     | services.auth_service | login:100 | Login: ann@example.com (a82bc88be010455c976cf7f7bad911ff)
+2026-08-21 09:09:59 | DEBUG    | services.auth_service | refresh:140 | Rotated refresh token for a82bc88be010455c976cf7f7bad911ff
+2026-08-21 09:09:59 | WARNING  | services.auth_service | refresh:127 | Reused refresh token for user a82bc88be010455c976cf7f7bad911ff — all sessions revoked
+2026-08-21 09:09:59 | WARNING  | services.auth_service | refresh:127 | Reused refresh token for user a82bc88be010455c976cf7f7bad911ff — all sessions revoked
+2026-08-21 09:09:59 | WARNING  | services.auth_service | refresh:127 | Reused refresh token for user a82bc88be010455c976cf7f7bad911ff — all sessions revoked
+2026-08-21 09:09:59 | INFO     | services.auth_service | login:100 | Login: ann@example.com (a82bc88be010455c976cf7f7bad911ff)
+2026-08-21 09:09:59 | WARNING  | services.auth_service | refresh:127 | Reused refresh token for user a82bc88be010455c976cf7f7bad911ff — all sessions revoked
+2026-08-21 09:10:00 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 09:10:00 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 09:10:00 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 09:10:00 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 09:10:00 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 09:10:00 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 09:10:00 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 09:10:00 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 09:10:00 | INFO     | core.database | init_db:81 | Database ready (sqlite+aiosqlite:////tmp/cfa_test.db)
+2026-08-21 09:10:07 | INFO     | services.auth_service | signup:71 | Account created: ada@analytics.io (294347f431b44255845275cb18f91b13)
+2026-08-21 09:10:07 | INFO     | api.socket_handler | connect:57 | Client connected: FxVri28agByijiuDAAAB (user=ada@analytics.io)
+2026-08-21 09:10:09 | INFO     | api.socket_handler | disconnect:61 | Client disconnected: FxVri28agByijiuDAAAB
+2026-08-21 09:10:09 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 294347f431b44255845275cb18f91b13:e82e173f1ec746c8b553d55358bb9608
+2026-08-21 09:10:09 | DEBUG    | services.auth_service | refresh:140 | Rotated refresh token for 294347f431b44255845275cb18f91b13
+2026-08-21 09:10:09 | INFO     | api.socket_handler | connect:57 | Client connected: c4fATF55pV6r5yobAAAD (user=ada@analytics.io)
+2026-08-21 09:10:11 | INFO     | api.socket_handler | query:108 | Query from c4fATF55pV6r5yobAAAD (chat=383a03241c1540ce9f02e508738495ab): 'hello'
+2026-08-21 09:10:11 | INFO     | services.chat_service | query_stream:98 | Run e38394bb5e5f4716918141fd5515958d started: 'hello' (session=294347f431b44255845275cb18f91b13:383a03241c1540ce9f02e508738495ab)
+2026-08-21 09:10:11 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat 294347f431b44255845275cb18f91b13:383a03241c1540ce9f02e508738495ab
+2026-08-21 09:10:11 | INFO     | services.vector_service | search:104 | Retrieved 0 chunk(s) for 'hello' (chat=294347f431b44255845275cb18f91b13:383a03241c1540ce9f02e508738495ab)
+2026-08-21 09:10:11 | DEBUG    | graph.nodes | retrieve:69 | Retrieved 0 chars of context from 0 chunk(s)
+2026-08-21 09:10:11 | INFO     | graph.nodes | no_filing:78 | No filing in this chat — asking for one instead of answering
+2026-08-21 09:10:11 | INFO     | services.chat_service | query_stream:127 | Run e38394bb5e5f4716918141fd5515958d finished (category=qa)
+2026-08-21 09:10:15 | INFO     | api.socket_handler | disconnect:61 | Client disconnected: c4fATF55pV6r5yobAAAD
+2026-08-21 09:10:15 | INFO     | services.vector_service | delete_session:118 | Deleted filings for chat 294347f431b44255845275cb18f91b13:383a03241c1540ce9f02e508738495ab
+2026-08-21 09:10:16 | WARNING  | services.auth_service | refresh:127 | Reused refresh token for user 294347f431b44255845275cb18f91b13 — all sessions revoked
+2026-08-21 09:10:16 | INFO     | services.auth_service | login:100 | Login: ada@analytics.io (294347f431b44255845275cb18f91b13)
+2026-08-21 09:10:16 | INFO     | api.socket_handler | connect:57 | Client connected: 6olBZwCBMnQGGt16AAAF (user=ada@analytics.io)
+2026-08-21 09:10:16 | INFO     | api.socket_handler | disconnect:61 | Client disconnected: 6olBZwCBMnQGGt16AAAF
+2026-08-21 09:10:16 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 294347f431b44255845275cb18f91b13:0dc26efc77c0409e8ffb568eb63eb92e
+2026-08-21 09:27:08 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 09:27:08 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 09:27:08 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 09:27:08 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 09:27:08 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 09:27:08 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 09:27:09 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 09:27:09 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 09:27:42 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 09:27:42 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 09:27:42 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 09:27:42 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 09:27:42 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 09:27:42 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 09:27:42 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 09:27:42 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 09:27:43 | INFO     | core.database | init_db:100 | Database ready (sqlite+aiosqlite:////tmp/tmpzo5d_ot7.db)
+2026-08-21 09:27:43 | INFO     | services.auth_service | signup:96 | Account created: ada@x.io (5e247e3f399e4d74b4eca39cb407b757)
+2026-08-21 09:28:20 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 09:28:20 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 09:28:20 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 09:28:20 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 09:28:20 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 09:28:20 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 09:28:20 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 09:28:20 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 09:28:20 | INFO     | core.database | init_db:100 | Database ready (sqlite+aiosqlite:////tmp/tmptca7t0_x.db)
+2026-08-21 09:28:21 | INFO     | services.auth_service | signup:96 | Account created: ada@x.io (ffc3985987914fd08ad3270838375aaa)
+2026-08-21 09:28:35 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 09:28:36 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 09:28:36 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 09:28:36 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 09:28:36 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 09:28:36 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 09:28:36 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 09:28:36 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 09:28:36 | INFO     | core.database | init_db:100 | Database ready (sqlite+aiosqlite:////tmp/tmp93mc24wu.db)
+2026-08-21 09:28:36 | INFO     | services.auth_service | signup:96 | Account created: ada@x.io (e54f2eaa15064c1eb594404d967c302b)
+2026-08-21 09:28:37 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 09:28:38 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 09:28:38 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 09:28:38 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 09:28:38 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 09:28:38 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 09:28:38 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 09:28:38 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 09:28:38 | INFO     | core.database | init_db:100 | Database ready (sqlite+aiosqlite:////tmp/tmp5fgduzqv.db)
+2026-08-21 09:28:38 | INFO     | services.auth_service | signup:96 | Account created: ann@example.com (b9f81074d40741ed881a28ca7dd34858)
+2026-08-21 09:28:38 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat b9f81074d40741ed881a28ca7dd34858:s1
+2026-08-21 09:28:39 | INFO     | services.auth_service | login:118 | Failed login for ann@example.com
+2026-08-21 09:28:39 | INFO     | services.auth_service | login:125 | Login: ann@example.com (b9f81074d40741ed881a28ca7dd34858)
+2026-08-21 09:28:39 | DEBUG    | services.auth_service | refresh:165 | Rotated refresh token for b9f81074d40741ed881a28ca7dd34858
+2026-08-21 09:28:39 | WARNING  | services.auth_service | refresh:152 | Reused refresh token for user b9f81074d40741ed881a28ca7dd34858 — all sessions revoked
+2026-08-21 09:28:39 | WARNING  | services.auth_service | refresh:152 | Reused refresh token for user b9f81074d40741ed881a28ca7dd34858 — all sessions revoked
+2026-08-21 09:28:39 | WARNING  | services.auth_service | refresh:152 | Reused refresh token for user b9f81074d40741ed881a28ca7dd34858 — all sessions revoked
+2026-08-21 09:28:39 | INFO     | services.auth_service | login:125 | Login: ann@example.com (b9f81074d40741ed881a28ca7dd34858)
+2026-08-21 09:28:39 | WARNING  | services.auth_service | refresh:152 | Reused refresh token for user b9f81074d40741ed881a28ca7dd34858 — all sessions revoked
+2026-08-21 09:28:40 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 09:28:41 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 09:28:41 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 09:28:41 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 09:28:41 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 09:28:41 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 09:28:41 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 09:28:41 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 09:28:41 | INFO     | core.database | init_db:100 | Database ready (sqlite+aiosqlite:////tmp/cfa_test.db)
+2026-08-21 09:28:48 | INFO     | services.auth_service | signup:96 | Account created: ada@analytics.io (a612bb2764a14274868ab07546b33e4f)
+2026-08-21 09:28:48 | INFO     | api.socket_handler | connect:57 | Client connected: KOkHZaadw3iS4KrnAAAB (user=ada@analytics.io)
+2026-08-21 09:28:49 | INFO     | api.socket_handler | disconnect:61 | Client disconnected: KOkHZaadw3iS4KrnAAAB
+2026-08-21 09:28:49 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat a612bb2764a14274868ab07546b33e4f:53fdcecbc75d436f86f74ca7e5e5c732
+2026-08-21 09:28:49 | DEBUG    | services.auth_service | refresh:165 | Rotated refresh token for a612bb2764a14274868ab07546b33e4f
+2026-08-21 09:28:49 | INFO     | api.socket_handler | connect:57 | Client connected: r1nbWtP4eYDVaWZwAAAD (user=ada@analytics.io)
+2026-08-21 09:28:51 | INFO     | api.socket_handler | query:108 | Query from r1nbWtP4eYDVaWZwAAAD (chat=188eae4ab16041cbb74472f26e75a7bd): 'hello'
+2026-08-21 09:28:51 | INFO     | services.chat_service | query_stream:98 | Run ff3af259fc344d39a046e31c2669129d started: 'hello' (session=a612bb2764a14274868ab07546b33e4f:188eae4ab16041cbb74472f26e75a7bd)
+2026-08-21 09:28:51 | DEBUG    | services.vector_service | _store:129 | Opened collection for chat a612bb2764a14274868ab07546b33e4f:188eae4ab16041cbb74472f26e75a7bd
+2026-08-21 09:28:53 | INFO     | services.vector_service | search:104 | Retrieved 0 chunk(s) for 'hello' (chat=a612bb2764a14274868ab07546b33e4f:188eae4ab16041cbb74472f26e75a7bd)
+2026-08-21 09:28:53 | DEBUG    | graph.nodes | retrieve:69 | Retrieved 0 chars of context from 0 chunk(s)
+2026-08-21 09:28:53 | INFO     | graph.nodes | no_filing:78 | No filing in this chat — asking for one instead of answering
+2026-08-21 09:28:53 | INFO     | services.chat_service | query_stream:127 | Run ff3af259fc344d39a046e31c2669129d finished (category=qa)
+2026-08-21 09:28:55 | INFO     | api.socket_handler | disconnect:61 | Client disconnected: r1nbWtP4eYDVaWZwAAAD
+2026-08-21 09:28:55 | INFO     | services.vector_service | delete_session:118 | Deleted filings for chat a612bb2764a14274868ab07546b33e4f:188eae4ab16041cbb74472f26e75a7bd
+2026-08-21 09:28:57 | WARNING  | services.auth_service | refresh:152 | Reused refresh token for user a612bb2764a14274868ab07546b33e4f — all sessions revoked
+2026-08-21 09:28:57 | INFO     | services.auth_service | login:125 | Login: ada@analytics.io (a612bb2764a14274868ab07546b33e4f)
+2026-08-21 09:28:57 | INFO     | api.socket_handler | connect:57 | Client connected: CSNjGpI41UAv5D0GAAAF (user=ada@analytics.io)
+2026-08-21 09:28:57 | INFO     | api.socket_handler | disconnect:61 | Client disconnected: CSNjGpI41UAv5D0GAAAF
+2026-08-21 09:28:57 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat a612bb2764a14274868ab07546b33e4f:c08079b9c3de48a1a9b57142f7667550
+2026-08-21 09:30:36 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 09:30:36 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 09:30:36 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 09:30:36 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 09:30:36 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 09:30:36 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 09:30:36 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 09:30:36 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 09:30:36 | INFO     | core.database | init_db:100 | Database ready (sqlite+aiosqlite:////tmp/tmpk1mxc2b1.db)
+2026-08-21 09:30:37 | INFO     | services.auth_service | signup:96 | Account created: ada@x.io (644c5aa0c35d4649b4182b3f32597a77)
+2026-08-21 09:30:38 | INFO     | prompts.templates | _load_prompts:31 | Loaded 10 prompts from prompts.yaml
+2026-08-21 09:30:38 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 09:30:38 | INFO     | services.vector_service | __init__:51 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 09:30:38 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 09:30:38 | INFO     | services.analysis_service | __init__:22 | AnalysisService ready (8 categories)
+2026-08-21 09:30:38 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 09:30:38 | INFO     | services.chat_service | __init__:54 | ChatService ready
+2026-08-21 09:30:38 | INFO     | main | <module>:154 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 09:30:39 | INFO     | core.database | init_db:100 | Database ready (sqlite+aiosqlite:////tmp/tmprc9cqs8n.db)
+2026-08-21 09:30:39 | INFO     | services.auth_service | signup:96 | Account created: ann@example.com (0c14304bf5764ee89d8cd5bbb1087d2e)
+2026-08-21 09:30:39 | DEBUG    | services.vector_service | delete_session:116 | Nothing to delete for chat 0c14304bf5764ee89d8cd5bbb1087d2e:s1
+2026-08-21 09:30:39 | INFO     | services.auth_service | login:118 | Failed login for ann@example.com
+2026-08-21 09:30:40 | INFO     | services.auth_service | login:125 | Login: ann@example.com (0c14304bf5764ee89d8cd5bbb1087d2e)
+2026-08-21 09:30:40 | DEBUG    | services.auth_service | refresh:165 | Rotated refresh token for 0c14304bf5764ee89d8cd5bbb1087d2e
+2026-08-21 09:30:40 | WARNING  | services.auth_service | refresh:152 | Reused refresh token for user 0c14304bf5764ee89d8cd5bbb1087d2e — all sessions revoked
+2026-08-21 09:30:40 | WARNING  | services.auth_service | refresh:152 | Reused refresh token for user 0c14304bf5764ee89d8cd5bbb1087d2e — all sessions revoked
+2026-08-21 09:30:40 | WARNING  | services.auth_service | refresh:152 | Reused refresh token for user 0c14304bf5764ee89d8cd5bbb1087d2e — all sessions revoked
+2026-08-21 09:30:40 | INFO     | services.auth_service | login:125 | Login: ann@example.com (0c14304bf5764ee89d8cd5bbb1087d2e)
+2026-08-21 09:30:40 | WARNING  | services.auth_service | refresh:152 | Reused refresh token for user 0c14304bf5764ee89d8cd5bbb1087d2e — all sessions revoked
+2026-08-21 09:54:55 | INFO     | prompts.templates | _load_prompts:31 | Loaded 11 prompts from prompts.yaml
+2026-08-21 09:54:55 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 09:54:55 | INFO     | services.vector_service | __init__:56 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 09:54:55 | INFO     | services.summary_service | __init__:33 | SummaryService ready
+2026-08-21 09:54:55 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 09:54:55 | INFO     | services.analysis_service | __init__:30 | AnalysisService ready (8 categories)
+2026-08-21 09:54:55 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 09:54:55 | INFO     | services.chat_service | __init__:60 | ChatService ready
+2026-08-21 09:54:55 | INFO     | main | <module>:126 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 09:55:05 | INFO     | prompts.templates | _load_prompts:31 | Loaded 11 prompts from prompts.yaml
+2026-08-21 09:55:05 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 09:55:05 | INFO     | services.vector_service | __init__:56 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 09:55:05 | INFO     | services.summary_service | __init__:33 | SummaryService ready
+2026-08-21 09:55:05 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 09:55:05 | INFO     | services.analysis_service | __init__:30 | AnalysisService ready (8 categories)
+2026-08-21 09:55:05 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 09:55:05 | INFO     | services.chat_service | __init__:60 | ChatService ready
+2026-08-21 09:55:05 | INFO     | main | <module>:126 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 09:55:59 | INFO     | prompts.templates | _load_prompts:31 | Loaded 11 prompts from prompts.yaml
+2026-08-21 09:55:59 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 09:55:59 | INFO     | services.vector_service | __init__:56 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 09:55:59 | INFO     | services.summary_service | __init__:33 | SummaryService ready
+2026-08-21 09:55:59 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 09:55:59 | INFO     | services.analysis_service | __init__:30 | AnalysisService ready (8 categories)
+2026-08-21 09:55:59 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 09:55:59 | INFO     | services.chat_service | __init__:60 | ChatService ready
+2026-08-21 09:55:59 | INFO     | main | <module>:126 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 09:56:00 | INFO     | core.database | init_db:102 | Database ready (sqlite+aiosqlite:////tmp/tmpuyudwx_e/routes.db)
+2026-08-21 09:56:00 | INFO     | core.cache | connect:62 | REDIS_URL not set — running without a message cache
+2026-08-21 09:56:00 | INFO     | services.auth_service | signup:96 | Account created: b@c.com (a532a41a98e24552a827b97cde38405a)
+2026-08-21 09:56:00 | INFO     | services.history_service | open_conversation:130 | Opened conversation 0a33a6bb2dbd44fbba318b3e8598e5cb (user=a532a41a98e24552a827b97cde38405a)
+2026-08-21 09:56:01 | INFO     | services.auth_service | signup:96 | Account created: c@d.com (1574e92c48d246ee9123e18ff4da2ea2)
+2026-08-21 09:56:01 | INFO     | services.history_service | delete_conversation:206 | Deleted conversation 0a33a6bb2dbd44fbba318b3e8598e5cb (user=a532a41a98e24552a827b97cde38405a)
+2026-08-21 09:56:01 | DEBUG    | services.vector_service | delete_session:121 | Nothing to delete for chat a532a41a98e24552a827b97cde38405a:d1
+2026-08-21 09:56:47 | INFO     | prompts.templates | _load_prompts:31 | Loaded 11 prompts from prompts.yaml
+2026-08-21 09:56:48 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 09:56:48 | INFO     | services.vector_service | __init__:56 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 09:56:48 | INFO     | services.summary_service | __init__:33 | SummaryService ready
+2026-08-21 09:56:48 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 09:56:48 | INFO     | services.analysis_service | __init__:30 | AnalysisService ready (8 categories)
+2026-08-21 09:56:48 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 09:56:48 | INFO     | services.chat_service | __init__:60 | ChatService ready
+2026-08-21 09:56:48 | INFO     | main | <module>:126 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 09:56:48 | INFO     | core.database | init_db:102 | Database ready (sqlite+aiosqlite:////tmp/tmpee_ltjmx/routes.db)
+2026-08-21 09:56:48 | INFO     | core.cache | connect:62 | REDIS_URL not set — running without a message cache
+2026-08-21 09:56:48 | INFO     | services.auth_service | signup:96 | Account created: b@c.com (911d88a11b97443e899f132666fc1a97)
+2026-08-21 09:56:49 | INFO     | services.history_service | open_conversation:131 | Opened conversation 2a7305655bee4609bf841623e80b701e (user=911d88a11b97443e899f132666fc1a97)
+2026-08-21 09:56:49 | INFO     | services.auth_service | signup:96 | Account created: c@d.com (eab3148121e3442da50cbe9d8ec7ae5e)
+2026-08-21 09:56:49 | INFO     | services.history_service | delete_conversation:207 | Deleted conversation 2a7305655bee4609bf841623e80b701e (user=911d88a11b97443e899f132666fc1a97)
+2026-08-21 09:56:49 | DEBUG    | services.vector_service | delete_session:121 | Nothing to delete for chat 911d88a11b97443e899f132666fc1a97:d1
+2026-08-21 09:57:33 | INFO     | prompts.templates | _load_prompts:31 | Loaded 11 prompts from prompts.yaml
+2026-08-21 09:57:34 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 09:57:34 | INFO     | services.vector_service | __init__:56 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 09:57:34 | INFO     | services.summary_service | __init__:33 | SummaryService ready
+2026-08-21 09:57:34 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 09:57:34 | INFO     | services.analysis_service | __init__:30 | AnalysisService ready (8 categories)
+2026-08-21 09:57:34 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 09:57:34 | INFO     | services.chat_service | __init__:60 | ChatService ready
+2026-08-21 09:57:34 | INFO     | main | <module>:126 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 09:57:34 | INFO     | core.database | init_db:102 | Database ready (sqlite+aiosqlite:////tmp/tmp14cjwhqj/routes.db)
+2026-08-21 09:57:34 | INFO     | core.cache | connect:62 | REDIS_URL not set — running without a message cache
+2026-08-21 09:57:34 | INFO     | services.auth_service | signup:96 | Account created: b@c.com (eec840ea00354c1bbd706102f7ede6b3)
+2026-08-21 09:57:34 | INFO     | services.history_service | open_conversation:131 | Opened conversation 65024410dfdc47639964cf45421c550b (user=eec840ea00354c1bbd706102f7ede6b3)
+2026-08-21 09:57:35 | INFO     | services.auth_service | signup:96 | Account created: c@d.com (824bd96f0b8f4b56ac9476e856dab252)
+2026-08-21 09:57:35 | INFO     | services.history_service | delete_conversation:207 | Deleted conversation 65024410dfdc47639964cf45421c550b (user=eec840ea00354c1bbd706102f7ede6b3)
+2026-08-21 09:57:35 | DEBUG    | services.vector_service | delete_session:121 | Nothing to delete for chat eec840ea00354c1bbd706102f7ede6b3:d1
+2026-08-21 10:04:14 | INFO     | prompts.templates | _load_prompts:31 | Loaded 11 prompts from prompts.yaml
+2026-08-21 10:04:15 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 10:04:15 | INFO     | services.vector_service | __init__:56 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 10:04:15 | INFO     | services.summary_service | __init__:33 | SummaryService ready
+2026-08-21 10:04:15 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 10:04:15 | INFO     | services.analysis_service | __init__:30 | AnalysisService ready (8 categories)
+2026-08-21 10:04:15 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 10:04:15 | INFO     | services.chat_service | __init__:60 | ChatService ready
+2026-08-21 10:04:15 | INFO     | main | <module>:126 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 10:04:15 | INFO     | core.database | init_db:102 | Database ready (sqlite+aiosqlite:////tmp/tmptz8xebh9/routes.db)
+2026-08-21 10:04:15 | INFO     | core.cache | connect:62 | REDIS_URL not set — running without a message cache
+2026-08-21 10:04:15 | INFO     | services.auth_service | signup:96 | Account created: b@c.com (4648af147046438ca8df6f298a2694fc)
+2026-08-21 10:04:16 | INFO     | services.history_service | open_conversation:131 | Opened conversation f5a6af57016d48c7b152ca3b110ba5cf (user=4648af147046438ca8df6f298a2694fc)
+2026-08-21 10:04:16 | INFO     | services.auth_service | signup:96 | Account created: c@d.com (7d5b984a36154a1ea4e874a1b5bc110e)
+2026-08-21 10:04:16 | INFO     | services.history_service | delete_conversation:207 | Deleted conversation f5a6af57016d48c7b152ca3b110ba5cf (user=4648af147046438ca8df6f298a2694fc)
+2026-08-21 10:04:16 | DEBUG    | services.vector_service | delete_session:121 | Nothing to delete for chat 4648af147046438ca8df6f298a2694fc:d1
+2026-08-21 10:09:17 | INFO     | prompts.templates | _load_prompts:31 | Loaded 11 prompts from prompts.yaml
+2026-08-21 10:09:17 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 10:09:17 | INFO     | services.vector_service | __init__:56 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 10:09:17 | INFO     | services.summary_service | __init__:33 | SummaryService ready
+2026-08-21 10:09:17 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 10:09:17 | INFO     | services.analysis_service | __init__:30 | AnalysisService ready (8 categories)
+2026-08-21 10:09:17 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 10:09:17 | INFO     | services.chat_service | __init__:60 | ChatService ready
+2026-08-21 10:09:17 | INFO     | main | <module>:126 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 10:11:01 | INFO     | prompts.templates | _load_prompts:31 | Loaded 11 prompts from prompts.yaml
+2026-08-21 10:11:02 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 10:11:02 | INFO     | services.vector_service | __init__:56 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 10:11:02 | INFO     | services.summary_service | __init__:33 | SummaryService ready
+2026-08-21 10:11:02 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 10:11:02 | INFO     | services.analysis_service | __init__:30 | AnalysisService ready (8 categories)
+2026-08-21 10:11:02 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 10:11:02 | INFO     | services.chat_service | __init__:61 | ChatService ready
+2026-08-21 10:11:02 | INFO     | main | <module>:126 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 10:11:10 | INFO     | prompts.templates | _load_prompts:31 | Loaded 11 prompts from prompts.yaml
+2026-08-21 10:11:10 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 10:11:10 | INFO     | services.vector_service | __init__:56 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 10:11:10 | INFO     | services.summary_service | __init__:33 | SummaryService ready
+2026-08-21 10:11:10 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 10:11:10 | INFO     | services.analysis_service | __init__:30 | AnalysisService ready (8 categories)
+2026-08-21 10:11:10 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 10:11:10 | INFO     | services.chat_service | __init__:61 | ChatService ready
+2026-08-21 10:11:10 | INFO     | main | <module>:126 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 10:11:20 | INFO     | prompts.templates | _load_prompts:31 | Loaded 11 prompts from prompts.yaml
+2026-08-21 10:11:20 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 10:11:20 | INFO     | services.vector_service | __init__:56 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 10:11:20 | INFO     | services.summary_service | __init__:33 | SummaryService ready
+2026-08-21 10:11:20 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 10:11:20 | INFO     | services.analysis_service | __init__:30 | AnalysisService ready (8 categories)
+2026-08-21 10:11:20 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 10:11:20 | INFO     | services.chat_service | __init__:61 | ChatService ready
+2026-08-21 10:11:20 | INFO     | main | <module>:126 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 10:11:30 | INFO     | prompts.templates | _load_prompts:31 | Loaded 11 prompts from prompts.yaml
+2026-08-21 10:11:30 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 10:11:30 | INFO     | services.vector_service | __init__:56 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 10:11:30 | INFO     | services.summary_service | __init__:33 | SummaryService ready
+2026-08-21 10:11:30 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 10:11:30 | INFO     | services.analysis_service | __init__:30 | AnalysisService ready (8 categories)
+2026-08-21 10:11:30 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 10:11:30 | INFO     | services.chat_service | __init__:61 | ChatService ready
+2026-08-21 10:11:30 | INFO     | main | <module>:126 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 10:11:37 | INFO     | prompts.templates | _load_prompts:31 | Loaded 11 prompts from prompts.yaml
+2026-08-21 10:11:38 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 10:11:38 | INFO     | services.vector_service | __init__:56 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 10:11:38 | INFO     | services.summary_service | __init__:33 | SummaryService ready
+2026-08-21 10:11:38 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 10:11:38 | INFO     | services.analysis_service | __init__:30 | AnalysisService ready (8 categories)
+2026-08-21 10:11:38 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 10:11:38 | INFO     | services.chat_service | __init__:61 | ChatService ready
+2026-08-21 10:11:38 | INFO     | main | <module>:126 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 10:11:48 | INFO     | prompts.templates | _load_prompts:31 | Loaded 11 prompts from prompts.yaml
+2026-08-21 10:11:48 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 10:11:48 | INFO     | services.vector_service | __init__:56 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 10:11:48 | INFO     | services.summary_service | __init__:33 | SummaryService ready
+2026-08-21 10:11:48 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 10:11:48 | INFO     | services.analysis_service | __init__:30 | AnalysisService ready (8 categories)
+2026-08-21 10:11:48 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 10:11:48 | INFO     | services.chat_service | __init__:61 | ChatService ready
+2026-08-21 10:11:48 | INFO     | main | <module>:126 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 10:13:14 | INFO     | prompts.templates | _load_prompts:31 | Loaded 11 prompts from prompts.yaml
+2026-08-21 10:13:14 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 10:13:14 | INFO     | services.vector_service | __init__:56 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 10:13:14 | INFO     | services.summary_service | __init__:33 | SummaryService ready
+2026-08-21 10:13:14 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 10:13:14 | INFO     | services.analysis_service | __init__:30 | AnalysisService ready (8 categories)
+2026-08-21 10:13:14 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 10:13:14 | INFO     | services.chat_service | __init__:61 | ChatService ready
+2026-08-21 10:13:14 | INFO     | main | <module>:126 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 10:13:39 | INFO     | prompts.templates | _load_prompts:31 | Loaded 11 prompts from prompts.yaml
+2026-08-21 10:13:40 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 10:13:40 | INFO     | services.vector_service | __init__:56 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 10:13:40 | INFO     | services.summary_service | __init__:33 | SummaryService ready
+2026-08-21 10:13:40 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 10:13:40 | INFO     | services.analysis_service | __init__:30 | AnalysisService ready (8 categories)
+2026-08-21 10:13:40 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 10:13:40 | INFO     | services.chat_service | __init__:61 | ChatService ready
+2026-08-21 10:13:40 | INFO     | main | <module>:126 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 10:13:40 | INFO     | core.database | init_db:102 | Database ready (sqlite+aiosqlite:////tmp/tmp.veVPNXE1ze/t.db)
+2026-08-21 10:13:40 | INFO     | core.cache | connect:62 | REDIS_URL not set — running without a message cache
+2026-08-21 10:13:40 | INFO     | services.auth_service | signup:96 | Account created: a@b.com (4ef6d9e253e5440b877e5c8976c1d026)
+2026-08-21 10:13:41 | INFO     | services.auth_service | login:125 | Login: a@b.com (4ef6d9e253e5440b877e5c8976c1d026)
+2026-08-21 10:13:41 | DEBUG    | services.auth_service | refresh:165 | Rotated refresh token for 4ef6d9e253e5440b877e5c8976c1d026
+2026-08-21 10:13:41 | DEBUG    | services.vector_service | ingest_file:75 | Ingesting f.txt (34 bytes) into chat 4ef6d9e253e5440b877e5c8976c1d026:sess-1
+2026-08-21 10:13:41 | DEBUG    | services.vector_service | _store:134 | Opened collection for chat 4ef6d9e253e5440b877e5c8976c1d026:sess-1
+2026-08-21 10:13:42 | INFO     | services.vector_service | ingest_file:95 | Ingested f.txt -> 1 chunks (chat=4ef6d9e253e5440b877e5c8976c1d026:sess-1)
+2026-08-21 10:13:42 | INFO     | services.history_service | open_conversation:131 | Opened conversation f4ee69b0354c4d5580be7bcafe585f57 (user=4ef6d9e253e5440b877e5c8976c1d026)
+2026-08-21 10:13:42 | INFO     | api.chat_routes | upload_file:82 | Uploaded f.txt -> 1 chunks (user=4ef6d9e253e5440b877e5c8976c1d026)
+2026-08-21 10:13:42 | INFO     | services.history_service | delete_conversation:207 | Deleted conversation f4ee69b0354c4d5580be7bcafe585f57 (user=4ef6d9e253e5440b877e5c8976c1d026)
+2026-08-21 10:13:42 | INFO     | services.vector_service | delete_session:123 | Deleted filings for chat 4ef6d9e253e5440b877e5c8976c1d026:sess-1
+2026-08-21 10:13:55 | INFO     | prompts.templates | _load_prompts:31 | Loaded 11 prompts from prompts.yaml
+2026-08-21 10:13:56 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 10:13:56 | INFO     | services.vector_service | __init__:56 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 10:13:56 | INFO     | services.summary_service | __init__:33 | SummaryService ready
+2026-08-21 10:13:56 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 10:13:56 | INFO     | services.analysis_service | __init__:30 | AnalysisService ready (8 categories)
+2026-08-21 10:13:56 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 10:13:56 | INFO     | services.chat_service | __init__:61 | ChatService ready
+2026-08-21 10:13:56 | INFO     | main | <module>:126 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 10:13:56 | INFO     | core.database | init_db:102 | Database ready (sqlite+aiosqlite:////tmp/tmp.sSAJQ9HkGm/t2.db)
+2026-08-21 10:13:56 | INFO     | core.cache | connect:62 | REDIS_URL not set — running without a message cache
+2026-08-21 10:13:57 | INFO     | services.auth_service | signup:96 | Account created: z@b.com (b9684a91260f443ca20feb6bc393abe9)
+2026-08-21 10:13:57 | WARNING  | api.chat_routes | upload_file:63 | Upload rejected (f.txt): stub says: unsupported file type
+2026-08-21 10:51:38 | INFO     | prompts.templates | _load_prompts:31 | Loaded 11 prompts from prompts.yaml
+2026-08-21 10:51:38 | INFO     | services.llm_service | __init__:29 | LLMService ready (model=llama3.1:latest, embeddings=nomic-embed-text:latest, base_url=http://localhost:11434, temperature=0.0)
+2026-08-21 10:51:38 | INFO     | services.vector_service | __init__:56 | VectorService ready (persist=/home/selva/Documents/Production/Corporate_Filing_Analyzer_Agent/backend/data/chroma_db, chunk_size=1000, overlap=200)
+2026-08-21 10:51:38 | INFO     | services.summary_service | __init__:33 | SummaryService ready
+2026-08-21 10:51:38 | INFO     | services.router_service | __init__:37 | RouterService ready (8 categories)
+2026-08-21 10:51:38 | INFO     | services.analysis_service | __init__:30 | AnalysisService ready (8 categories)
+2026-08-21 10:51:38 | INFO     | graph.builder | build_graph:80 | Filing graph compiled with 8 analysis nodes
+2026-08-21 10:51:39 | INFO     | services.chat_service | __init__:61 | ChatService ready
+2026-08-21 10:51:39 | INFO     | main | <module>:126 | Backend ready — HTTP + Socket.IO mounted
+2026-08-21 10:51:39 | INFO     | core.database | init_db:102 | Database ready (sqlite+aiosqlite:////tmp/tmp.QtRGhE0ygB/t3.db)
+2026-08-21 10:51:39 | INFO     | core.cache | connect:62 | REDIS_URL not set — running without a message cache
+2026-08-21 10:51:39 | INFO     | services.auth_service | signup:96 | Account created: l@b.com (f671b3eebaab409bb05f0bfd25bfe20d)

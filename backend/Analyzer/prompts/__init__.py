@@ -1,11 +1,5 @@
-from prompts.templates import (
-    RouterPrompt,
-    QAPrompt,
-    FinancialsPrompt,
-    CompliancePrompt,
-    RisksPrompt,
-    SummaryPrompt,
-    ShareholdingPrompt,
-    GovernancePrompt,
-    MDAPrompt,
-)
+"""Prompts package."""
+
+from prompts.templates import get_prompt
+
+__all__ = ["get_prompt"]

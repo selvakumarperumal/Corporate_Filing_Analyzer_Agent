@@ -1,24 +1,23 @@
-"""Ollama LLM service for Corporate Filing Analyzer."""
+"""Ollama chat model and embeddings."""
 
 from __future__ import annotations
 
 import logging
-from typing import AsyncIterator
 
-from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_core.messages import BaseMessage
+from langchain_ollama import ChatOllama, OllamaEmbeddings
 
 logger = logging.getLogger(__name__)
 
 
 class LLMService:
-    """Wraps Ollama chat model and embeddings."""
+    """Wraps the Ollama chat model and the embedding model."""
 
     def __init__(
         self,
-        model: str = "llama3.1:latest",
-        embedding_model: str = "nomic-embed-text:latest",
-        base_url: str = "http://localhost:11434",
+        model: str,
+        embedding_model: str,
+        base_url: str,
         temperature: float = 0.0,
     ) -> None:
         self.chat_model = ChatOllama(
@@ -26,23 +25,20 @@ class LLMService:
             base_url=base_url,
             temperature=temperature,
         )
-        self.embeddings = OllamaEmbeddings(
-            model=embedding_model,
-            base_url=base_url,
-        )
+        self.embeddings = OllamaEmbeddings(model=embedding_model, base_url=base_url)
         logger.info(
-            "LLMService initialized (model=%s, embeddings=%s)",
+            "LLMService ready (model=%s, embeddings=%s, base_url=%s, temperature=%s)",
             model,
             embedding_model,
+            base_url,
+            temperature,
         )
 
     async def ainvoke(self, messages: list[BaseMessage]) -> str:
-        """Invoke LLM and return full response content."""
+        """Send messages to the model and return the reply as text."""
+        logger.debug("LLM call with %d message(s)", len(messages))
         response = await self.chat_model.ainvoke(messages)
-        return response.content
-
-    async def astream(self, messages: list[BaseMessage]) -> AsyncIterator[str]:
-        """Stream LLM response token by token."""
-        async for chunk in self.chat_model.astream(messages):
-            if chunk.content:
-                yield chunk.content
+        # `.text` flattens both plain-string and content-block replies.
+        text = str(response.text)
+        logger.debug("LLM replied with %d characters", len(text))
+        return text

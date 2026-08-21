@@ -1,0 +1,57 @@
+# CloudNativePG database for the Corporate Filing Analyzer.
+#
+# CNPG is a Kubernetes operator, so this is the form it actually takes — there
+# is no compose equivalent. The operand image the compose stack cannot use
+# (ghcr.io/cloudnative-pg/postgresql) is exactly what the operator runs here,
+# driven by its instance manager rather than a docker entrypoint.
+#
+# Install the operator first, then apply this:
+#
+#   kubectl apply --server-side -f \
+#     https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.27/releases/cnpg-1.27.0.yaml
+#   kubectl apply -f deploy/cnpg-cluster.yaml
+#
+# The operator generates a secret named `<cluster>-app` holding the credentials
+# and a ready-made URI for the application database. Point the API at it with:
+#
+#   env:
+#     - name: DATABASE_URL
+#       valueFrom:
+#         secretKeyRef: { name: filing-analyzer-db-app, key: uri }
+#
+# then rewrite the scheme to the async driver the app needs — CNPG emits
+# `postgresql://`, and SQLModel/SQLAlchemy need `postgresql+asyncpg://`.
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: filing-analyzer-db
+spec:
+  instances: 3
+
+  # Pin the same major version the compose stack runs, so a dump taken from one
+  # restores into the other without a version jump.
+  imageName: ghcr.io/cloudnative-pg/postgresql:17
+
+  bootstrap:
+    initdb:
+      # Creates the database and its owner role, and generates the
+      # `filing-analyzer-db-app` secret with credentials for them.
+      database: filing_analyzer
+      owner: analyzer
+
+  storage:
+    size: 10Gi
+
+  # Room for the pooled connections the API opens (DB_POOL_SIZE +
+  # DB_MAX_OVERFLOW per replica) with headroom for CNPG's own probes.
+  postgresql:
+    parameters:
+      max_connections: "200"
+
+  resources:
+    requests: { cpu: "500m", memory: 1Gi }
+    limits:   { cpu: "2",    memory: 2Gi }
+
+  monitoring:
+    enablePodMonitor: false

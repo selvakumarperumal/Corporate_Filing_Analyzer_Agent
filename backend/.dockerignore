@@ -1,0 +1,18 @@
+# The local virtualenv is built for the host's interpreter and is ~1GB; the
+# image builds its own in the builder stage.
+**/.venv
+**/__pycache__
+**/*.py[cod]
+
+# Local state: the SQLite database, the Chroma store and the rotated logs all
+# belong to whoever is running the container, not to the image.
+data/
+logs/
+
+# Local secrets must never be baked into an image layer.
+**/.env
+!**/.env.example
+
+**/.ruff_cache
+**/.pytest_cache
+**/.mypy_cache

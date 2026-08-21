@@ -1,0 +1,6 @@
+# Only the vendored bundles are served; the npm tree they came from is not.
+node_modules/
+package.json
+package-lock.json
+Dockerfile
+.dockerignore

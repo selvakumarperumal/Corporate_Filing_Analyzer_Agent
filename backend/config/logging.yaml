@@ -1,18 +1,88 @@
+# Logging configuration for the Corporate Filing Analyzer backend.
+#
+# Handlers are attached to the root logger only; every other entry just sets a
+# level and lets records propagate up. That keeps this file easy to read: one
+# place defines *where* logs go, the `loggers` block defines *how much* each
+# part of the app says.
+#
+# Log files land in `backend/logs/` (created automatically on startup).
+
 version: 1
-disable_existing_loggers: False
+disable_existing_loggers: false
+
 formatters:
-  simple:
-    format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  # Console: short and scannable while the server is running.
+  console:
+    format: "%(asctime)s | %(levelname)-8s | %(name)-28s | %(message)s"
+    datefmt: "%H:%M:%S"
+
+  # Files: full detail, including where the line came from.
+  detailed:
+    format: "%(asctime)s | %(levelname)-8s | %(name)s | %(funcName)s:%(lineno)d | %(message)s"
+    datefmt: "%Y-%m-%d %H:%M:%S"
+
 handlers:
   console:
     class: logging.StreamHandler
-    formatter: simple
+    formatter: console
     level: INFO
-loggers:
-  app:
+    stream: ext://sys.stdout
+
+  # Everything, including DEBUG, for after-the-fact debugging.
+  app_file:
+    class: logging.handlers.RotatingFileHandler
+    formatter: detailed
     level: DEBUG
-    handlers: [console]
-    propagate: False
+    filename: logs/analyzer.log
+    maxBytes: 5242880 # 5 MB
+    backupCount: 5
+    encoding: utf-8
+
+  # Failures only, so problems are not buried in the main log.
+  error_file:
+    class: logging.handlers.RotatingFileHandler
+    formatter: detailed
+    level: ERROR
+    filename: logs/errors.log
+    maxBytes: 2097152 # 2 MB
+    backupCount: 3
+    encoding: utf-8
+
+loggers:
+  # ── Our code: verbose, so every run can be traced end to end ──────────
+  main: # startup, HTTP endpoints
+    level: DEBUG
+  api: # Socket.IO connections and queries
+    level: DEBUG
+  graph: # retrieve -> router -> analysis node hops
+    level: DEBUG
+  services: # LLM, vector store, routing, analysis
+    level: DEBUG
+  prompts: # prompt loading
+    level: INFO
+
+  # ── Third-party noise: keep it out of the console ─────────────────────
+  httpx:
+    level: WARNING
+  httpcore:
+    level: WARNING
+  urllib3:
+    level: WARNING
+  chromadb:
+    level: WARNING
+  langchain:
+    level: WARNING
+  langchain_core:
+    level: WARNING
+  langgraph:
+    level: WARNING
+  socketio:
+    level: WARNING
+  engineio:
+    level: WARNING
+  uvicorn.access:
+    level: WARNING
+
 root:
   level: INFO
-  handlers: [console]
+  handlers: [console, app_file, error_file]

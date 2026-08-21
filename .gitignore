@@ -56,7 +56,6 @@ cover/
 *.pot
 
 # Django stuff:
-*.log
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
@@ -205,3 +204,17 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Local account database (SQLite). Real deployments point DATABASE_URL
+# at a server instead; either way the accounts never belong in git.
+backend/data/*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Runtime logs and the Chroma vector store ARE tracked in this repo
+# (see backend/logs/ and backend/data/chroma_db/) so deployments and
+# reviewers get the same corpus. Only the account database stays out.
+!logs/
+!*.log
+!backend/data/

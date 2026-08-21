@@ -1,79 +1,37 @@
-"""Graph state and category definitions for the filing analysis workflow."""
+"""State passed between the nodes of the filing analysis graph."""
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypedDict
-
-# ── Analysis categories ──────────────────────────────────────────────
-# Each category is a terminal node in the graph and maps 1:1 to a prompt
-# template in config/prompts.yaml.
-CATEGORIES: list[str] = [
-    "financials",
-    "compliance",
-    "risks",
-    "shareholding",
-    "governance",
-    "mda",
-    "summary",
-    "qa",
-]
-
-DEFAULT_CATEGORY = "qa"
-
-# Human-readable labels surfaced in the UI (category picker + route badges).
-CATEGORY_LABELS: dict[str, str] = {
-    "financials": "Financials",
-    "compliance": "Compliance & Audit",
-    "risks": "Risk Factors",
-    "shareholding": "Shareholding",
-    "governance": "Governance",
-    "mda": "MD&A",
-    "summary": "Executive Summary",
-    "qa": "General Q&A",
-}
-
-CATEGORY_DESCRIPTIONS: dict[str, str] = {
-    "financials": "Revenue, margins, EBITDA, balance sheet and cash flow metrics",
-    "compliance": "Auditor opinions, SOX 404 controls, legal and regulatory matters",
-    "risks": "Item 1A risk factors, market, credit and cyber vulnerabilities",
-    "shareholding": "Ownership structure, institutional holders, promoter stake",
-    "governance": "Board composition, committees, executive compensation",
-    "mda": "Management Discussion & Analysis, outlook and segment performance",
-    "summary": "Executive briefing across the full filing",
-    "qa": "Open-ended questions about the filing",
-}
-
-RouteSource = Literal["manual", "auto", "human"]
-"""How the final category was decided.
-
-- ``manual``: the user picked a category in the UI, the router node is skipped.
-- ``auto``: the LLM router classified the query.
-- ``human``: the LLM proposed a route and a human approved/overrode it.
-"""
+from typing import TypedDict
 
 
 class FilingState(TypedDict, total=False):
-    """State passed between nodes of the filing analysis graph.
+    """Filled in as a run walks ``retrieve -> router -> <category>``.
 
-    Written once at invocation (``query``…``require_approval``) and progressively
-    enriched by the nodes. Persisted by the checkpointer so an interrupted run
-    resumes with retrieval results intact instead of recomputing them.
+    ``query`` and ``session_id`` are set at invocation; every other key is
+    written by the node that produces it.
     """
 
-    # ── Inputs ──
+    # Inputs
     query: str
     session_id: str
-    forced_category: str | None
-    require_approval: bool
 
-    # ── Retrieval ──
+    # What this dossier has already established, as assembled by
+    # `services.history_service`: the older turns compressed into `summary`,
+    # the recent ones verbatim in `history` as {"role", "content", ...} dicts.
+    # Both empty on the first question of a dossier.
+    summary: str
+    history: list[dict]
+
+    # Passed in carrying the chat's name, or blank for a chat that has none
+    # yet — `router` names it on that first run and it comes back in `done`.
+    title: str
+
+    # Written by `retrieve`
     context: str
-    sources: list[dict[str, Any]]
 
-    # ── Routing ──
+    # Written by `router`
     category: str
-    route_source: RouteSource
-    proposed_category: str
 
-    # ── Output ──
+    # Written by the analysis node
     answer: str

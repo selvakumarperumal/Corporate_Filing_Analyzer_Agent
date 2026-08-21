@@ -1,0 +1,123 @@
+# Corporate Filing Analyzer — full local stack.
+#
+#   docker compose up --build
+#   → workbench on http://localhost:8080
+#
+# Four services: the static workbench (which also reverse-proxies the API onto
+# its own origin), the API, Postgres for accounts and the message ledger, and
+# Redis for the conversation read cache.
+#
+# The model is *not* in here. Ollama runs on the host, and the API reaches it
+# through host.docker.internal — see OLLAMA_BASE_URL below and the README.
+
+name: corporate-filing-analyzer
+
+services:
+  # ── Workbench ────────────────────────────────────────────────────────────
+  # The only service published to the host. It serves the static client and
+  # proxies /api and /socket.io to the backend, so the browser sees one origin
+  # and CORS never enters into it.
+  frontend:
+    build:
+      context: ./frontend
+    image: cfa-frontend:latest
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-8080}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [cfa]
+
+  # ── API ──────────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+    image: cfa-backend:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Async driver, because every query in the app is awaited. asyncpg is in
+      # the lockfile; a plain postgresql:// URL would fail at startup.
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-analyzer}:${POSTGRES_PASSWORD:-analyzer}@postgres:5432/${POSTGRES_DB:-filing_analyzer}
+      REDIS_URL: redis://redis:6379/0
+
+      # Ollama on the host. `host.docker.internal` resolves via the
+      # extra_hosts entry below, which is what makes this work on Linux too.
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:latest}
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text:latest}
+
+      # Signs every token. Unset means a random key per restart, which logs
+      # everyone out on each deploy — generate one, see .env.example.
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
+
+      # The browser talks to the frontend's origin, and nginx forwards from
+      # there, so that origin is the one the API must allow.
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+    volumes:
+      # The vector store. Postgres holds the accounts and the ledger, but the
+      # filings themselves are Chroma collections on disk — lose this and the
+      # dossiers survive with nothing left to answer from.
+      - filing-data:/app/data
+      - filing-logs:/app/logs
+    extra_hosts:
+      # Docker Desktop provides this name; on Linux it has to be asked for.
+      - "host.docker.internal:host-gateway"
+    networks: [cfa]
+
+  # ── Database ─────────────────────────────────────────────────────────────
+  # The official Postgres image, not the CloudNativePG one. CNPG is a
+  # Kubernetes operator: its operand image ships no docker-entrypoint.sh (its
+  # CMD is a bare `bash`) and is driven by the operator's instance manager, so
+  # it cannot initialise itself from POSTGRES_* variables under compose. The
+  # major version matches what CNPG would run, and `deploy/cnpg-cluster.yaml`
+  # is the same database as a real CNPG Cluster for Kubernetes.
+  postgres:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-analyzer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-analyzer}
+      POSTGRES_DB: ${POSTGRES_DB:-filing_analyzer}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # -U/-d named explicitly: bare pg_isready reports the server up while it
+      # is still running the init scripts, and the API would connect too early.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-analyzer} -d ${POSTGRES_DB:-filing_analyzer}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks: [cfa]
+
+  # ── Cache ────────────────────────────────────────────────────────────────
+  # A read cache in front of the message table, holding each conversation's hot
+  # tail. Nothing lives only here: flush it, or drop this service entirely, and
+  # the app is correct but reads go to Postgres every time.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Cache semantics on purpose: bounded memory, and the oldest tails evicted
+    # rather than writes being refused when it fills.
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru", "--save", ""]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [cfa]
+
+volumes:
+  postgres-data:
+  filing-data:
+  filing-logs:
+
+networks:
+  cfa:
+    driver: bridge

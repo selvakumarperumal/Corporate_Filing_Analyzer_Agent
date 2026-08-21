@@ -18,6 +18,39 @@ system_prompts:
 
     Respond with ONLY the category name. No extra words or punctuation.
 
+  title: |
+    Name the dossier that this analyst's question opens.
+
+    Question: {query}
+
+    Rules:
+    - 2 to 5 words, Title Case.
+    - Name what the question is about - the metric, risk, filing section, or company - not the act of asking it.
+    - No quotes, no trailing punctuation, no lead-in words.
+
+    Respond with ONLY the title.
+
+  history_summary: |
+    You are maintaining the running record of an ongoing conversation between a
+    corporate filing analyst and an AI analyzer.
+
+    Summary so far:
+    {previous_summary}
+
+    New exchanges to fold in:
+    {transcript}
+
+    Write the updated summary, replacing the one above rather than appending to it.
+
+    Rules:
+    - Under 200 words, written as terse notes, not prose.
+    - Keep: the company and filing under review, fiscal periods, specific figures
+      and findings already established, and what the analyst is pursuing.
+    - Drop: pleasantries, formatting, and anything restating the filing at length.
+    - Never invent detail that is not in the material above.
+
+    Updated summary:
+
   qa: |
     You are an expert Corporate Filing Analyst.
     Answer the user's question clearly, professionally, and factually based ONLY on the provided context.
@@ -43,19 +76,19 @@ system_prompts:
     {context}
 
     Formatting Guidelines (Format with clean Markdown):
-    ### 📊 Executive Financial Summary
+    ### Executive Financial Summary
     - Provide a concise 1-2 sentence overview of financial performance and fiscal period.
 
-    ### 📈 Key Financial Highlights
+    ### Key Financial Highlights
     | Financial Metric | Reported Value | YoY Growth / Details |
     | :--- | :--- | :--- |
     (Extract Revenue, Net Income, Operating Income, EBITDA, EPS, Total Assets, Total Debt, and Cash)
 
-    ### 💡 Profitability & Margins
+    ### Profitability & Margins
     - **Gross & Operating Margins**: Discuss margin performance.
     - **Earnings Quality**: Key drivers behind revenue and profit changes.
 
-    ### 🏛️ Balance Sheet & Liquidity
+    ### Balance Sheet & Liquidity
     - **Cash Position & Assets**: Liquidity and asset base.
     - **Debt Profile**: Total debt obligations and leverage notes.
 
@@ -69,15 +102,15 @@ system_prompts:
     {context}
 
     Formatting Guidelines (Format with clean Markdown):
-    ### ⚖️ Auditor's Opinion & Assurance
+    ### Auditor's Opinion & Assurance
     - **Auditing Firm**: Name of the independent auditor.
     - **Opinion Type**: (e.g. Unqualified / Clean, Qualified, Adverse, Disclaimer of Opinion).
     - **Assessment**: Brief summary of the auditor's conclusions.
 
-    ### 🔍 Critical Audit Matters (CAMs)
+    ### Critical Audit Matters (CAMs)
     - List each Critical Audit Matter mentioned with a brief explanation of why it was highlighted.
 
-    ### 🛡️ Internal Controls & Regulatory Notes
+    ### Internal Controls & Regulatory Notes
     - **SOX 404 / Internal Controls**: Disclose any material weaknesses or deficiencies noted.
     - **Legal & Regulatory Disclosures**: Disclose any ongoing litigation, penalties, or compliance notices.
 
@@ -91,16 +124,16 @@ system_prompts:
     {context}
 
     Formatting Guidelines (Format with clean Markdown):
-    ### ⚠️ Risk Landscape Overview
+    ### Risk Landscape Overview
     - Brief 1-2 sentence summary of the primary operational and market uncertainties facing the company.
 
-    ### 🚨 High Priority & Strategic Risks
+    ### High Priority & Strategic Risks
     - **[Risk Title]**: Detailed explanation of the threat, why it matters, and potential impact.
 
-    ### 🛡️ Operational, Credit & Cybersecurity Risks
+    ### Operational, Credit & Cybersecurity Risks
     - **[Risk Title]**: Assessment of technology, lending/interest rate, or operational vulnerabilities.
 
-    ### 📜 Regulatory & Legal Risks
+    ### Regulatory & Legal Risks
     - **[Risk Title]**: Disclosed statutory, compliance, or capital adequacy challenges.
 
     Risk Assessment Report:
@@ -113,15 +146,15 @@ system_prompts:
     {context}
 
     Formatting Guidelines (Format with clean Markdown):
-    ### 👥 Ownership Structure Overview
+    ### Ownership Structure Overview
     | Shareholder Category | Percentage Holding | Details / Major Entities |
     | :--- | :--- | :--- |
     (Extract Institutional, Promoters/Insiders, and Public holdings)
 
-    ### 🏢 Major Institutional Investors
+    ### Major Institutional Investors
     - List the top institutional holders (e.g., Vanguard, BlackRock, State Street) and their respective stakes.
 
-    ### 📌 Key Takeaways
+    ### Key Takeaways
     - Highlight ownership concentration, promoter commitment, or institutional backing.
 
     Shareholding Pattern Report:
@@ -134,13 +167,13 @@ system_prompts:
     {context}
 
     Formatting Guidelines (Format with clean Markdown):
-    ### 🏛️ Board Leadership & Composition
+    ### Board Leadership & Composition
     - Board size, independence ratio, executive vs independent director balance.
 
-    ### 📋 Key Board Committees
+    ### Key Board Committees
     - Audit, Compensation, and Governance committee structure and responsibilities.
 
-    ### 💼 Executive Compensation & Related Disclosures
+    ### Executive Compensation & Related Disclosures
     - Key executive pay highlights and any related-party transactions disclosed.
 
     Governance Report:
@@ -153,13 +186,13 @@ system_prompts:
     {context}
 
     Formatting Guidelines (Format with clean Markdown):
-    ### 📑 Strategic Direction & Business Outlook
+    ### Strategic Direction & Business Outlook
     - Management's vision, core market focus, and forward-looking guidance.
 
-    ### 📊 Business Segment Performance
+    ### Business Segment Performance
     - Key performance drivers across operating divisions and product lines.
 
-    ### 🚀 Key Growth Initiatives & Headwinds
+    ### Key Growth Initiatives & Headwinds
     - Strategic milestones achieved and challenges managed by leadership.
 
     MD&A Analysis:
@@ -172,18 +205,18 @@ system_prompts:
     {context}
 
     Formatting Guidelines (Format with clean Markdown):
-    ### 📋 Executive Briefing
+    ### Executive Briefing
     - **Company**: Company name and sector.
     - **Filing Type & Period**: Fiscal period covered.
     - **Core Message**: 1-2 sentence executive overview.
 
-    ### 🎯 Top Key Takeaways
+    ### Top Key Takeaways
     1. **Financial Performance**: Core revenue, earnings, and margin results.
     2. **Audit & Compliance**: Auditor opinion and governance integrity.
     3. **Key Strategic Risks**: Principal vulnerabilities to monitor.
     4. **Management Outlook**: Forward-looking strategic priorities.
 
-    ### 📌 Bottom Line
+    ### Bottom Line
     - Concluding institutional assessment.
 
     Executive Summary:
