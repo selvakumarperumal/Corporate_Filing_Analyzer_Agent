@@ -1,13 +1,12 @@
 # How the Corporate Filing Analyzer works
 
-A walkthrough of what actually happens inside the app, organised around the
-things an analyst does: signing in, opening a dossier, attaching a filing,
-asking a question, coming back tomorrow.
+A comprehensive walkthrough of what actually happens inside the app, organized around the
+actions an analyst takes: signing up, logging in, opening a new dossier, reopening an old dossier,
+attaching filings, asking questions, deleting dossiers, and managing sessions.
 
-This is the *behaviour* document. Setup, configuration values and the API
-reference live in the [README](../README.md); the real-time transport — what
-Socket.IO is, how it is mounted onto FastAPI, and how to deploy it — is in
-[SOCKETIO.md](SOCKETIO.md). Nothing here repeats them.
+This is the *architecture and behavior* document. Setup, configuration values, and the general
+reference live in the [README](../README.md); the real-time transport — how Socket.IO is mounted
+onto FastAPI and how events are streamed — is in [SOCKETIO.md](SOCKETIO.md).
 
 ---
 
@@ -16,17 +15,20 @@ Socket.IO is, how it is mounted onto FastAPI, and how to deploy it — is in
 - [The pieces](#the-pieces)
 - [Two ids for one dossier](#two-ids-for-one-dossier)
 - [Startup](#startup)
-- [Signing in](#signing-in)
+- [Signup: What happens in the background](#signup-what-happens-in-the-background)
+- [Login & Frontend Caching](#login--frontend-caching)
+- [JWT Architecture & Token Lifecycle](#jwt-architecture--token-lifecycle)
 - [Opening the workbench](#opening-the-workbench)
 - [Clicking "New dossier"](#clicking-new-dossier)
+- [Reopening an "Old dossier" (Hydration & Pagination)](#reopening-an-old-dossier-hydration--pagination)
 - [Attaching a filing](#attaching-a-filing)
-- [Asking a question](#asking-a-question)
+- [Asking a question in a dossier (New or Old)](#asking-a-question-in-a-dossier-new-or-old)
 - [Inside the graph](#inside-the-graph)
 - [How history is retrieved](#how-history-is-retrieved)
 - [The rolling summary](#the-rolling-summary)
-- [Reopening a dossier](#reopening-a-dossier)
 - [Switching dossiers mid-run](#switching-dossiers-mid-run)
-- [Discarding a dossier](#discarding-a-dossier)
+- [Discarding / Deleting a dossier](#discarding--deleting-a-dossier)
+- [Complete CRUD Matrix](#complete-crud-matrix)
 - [Signing out](#signing-out)
 - [Where everything is stored](#where-everything-is-stored)
 - [What happens when things fail](#what-happens-when-things-fail)
@@ -37,17 +39,15 @@ Socket.IO is, how it is mounted onto FastAPI, and how to deploy it — is in
 
 | Piece | What it is | Where |
 |---|---|---|
-| Workbench | Plain HTML/CSS/JS, no build step, two vendored libraries | `frontend/` |
+| Workbench | Plain HTML/CSS/JS, no build step, zero heavy frameworks | `frontend/` |
 | API | FastAPI for HTTP, Socket.IO for the streaming chat, one ASGI app | `backend/Analyzer/main.py` |
 | Graph | LangGraph: `retrieve → router → <category>` | `backend/Analyzer/graph/` |
-| Ledger | SQLModel async — accounts, conversations, messages | `backend/Analyzer/models/` |
-| Vector store | Chroma, one collection per dossier | `backend/data/chroma_db/` |
-| Cache | Redis, optional, holds each conversation's recent tail | `backend/Analyzer/core/cache.py` |
-| Model | Ollama on the host — `llama3.1` to answer, `nomic-embed-text` to embed | not in the stack |
+| Ledger | SQLModel async — accounts, conversations, messages, refresh tokens | `backend/Analyzer/models/` |
+| Vector store | Chroma, one isolated collection per dossier | `backend/data/chroma_db/` |
+| Cache | Redis, optional, holds each conversation's hot tail | `backend/Analyzer/core/cache.py` |
+| Model | Ollama on the host — `llama3.1` to answer, `nomic-embed-text` to embed | Host machine |
 
-The database is the source of truth for everything that has been said. Redis
-holds a copy of the hot tail and is allowed to be absent, cold, or switched
-off. Chroma holds the filing text; nothing else does.
+The SQL database is the source of truth for all users, dossiers, and messages. Redis holds a copy of the hot tail and is allowed to be absent, cold, or switched off. Chroma holds the filing text and vector embeddings; nothing else does.
 
 `main.py` mounts both protocols as one ASGI app:
 
@@ -55,45 +55,31 @@ off. Chroma holds the filing text; nothing else does.
 asgi_app = socketio.ASGIApp(sio, other_asgi_app=app)
 ```
 
-so `uvicorn main:asgi_app` serves the REST API *and* the websockets. Mounting
-`main:app` instead would silently drop every socket — which is why the
-Dockerfile's `CMD` names `asgi_app` explicitly.
+so `uvicorn main:asgi_app` serves the REST API *and* the websockets. Mounting `main:app` instead would silently drop every socket connection — which is why the Dockerfile's `CMD` names `asgi_app` explicitly.
 
 ---
 
 ## Two ids for one dossier
 
-Almost every confusing thing in this codebase becomes clear once these are
-separated:
+Almost every confusing thing in this codebase becomes clear once these two IDs are separated:
 
-**`client_id`** — minted by the browser (`newId()` in `app.js`, a UUID4 with
-the dashes stripped). This is the id in every URL path, every socket payload,
-and every event that comes back. It is unique *per account only*: two analysts
-can independently mint the same one.
+1. **`client_id`** — minted by the browser (`newId()` in `app.js`, a UUID4 with dashes stripped). This is the id in every URL path, every socket payload, and every event that comes back. It is unique *per account only*: two analysts can independently mint the same one.
+2. **`Conversation.id`** — the row's primary key (UUID), generated server-side. What `messages.conversation_id` foreign keys point at. The browser never sees it.
 
-**`Conversation.id`** — the row's primary key, generated server-side. What
-`messages.conversation_id` points at. The browser never sees it.
-
-Because `client_id` is only unique per account, nothing ever looks a
-conversation up by it alone. Every query is `WHERE user_id = ... AND
-client_id = ...`, enforced by a unique constraint:
+Because `client_id` is only unique per account, nothing ever looks a conversation up by it alone. Every query is `WHERE user_id = ... AND client_id = ...`, enforced by a unique constraint:
 
 ```python
 UniqueConstraint("user_id", "client_id", name="uq_conversation_owner_client")
 ```
 
-The same reasoning governs the vector store. `scoped_session_id()` in
-`services/chat_service.py` binds the owner into the id before it ever reaches
-Chroma:
+The same reasoning governs the vector store. `scoped_session_id()` in `services/chat_service.py` binds the owner into the id before it ever reaches Chroma:
 
 ```python
 def scoped_session_id(user_id: str, session_id: str) -> str:
     return f"{user_id}:{session_id}"
 ```
 
-which is then SHA-256'd into a collection name. There is no id a signed-in user
-can send that resolves to another account's filings — not by guessing, not by
-collision.
+which is then SHA-256'd into a collection name (`chat-<hash>`). There is no id a signed-in user can send that resolves to another account's filings — not by guessing, not by collision.
 
 ---
 
@@ -103,29 +89,15 @@ collision.
 
 `lifespan` in `main.py`, in order:
 
-1. **`init_db()`** — creates tables if absent. On SQLite it also `mkdir`s the
-   parent directory and registers a `connect` listener that issues
-   `PRAGMA foreign_keys=ON` on every connection. SQLite ignores foreign keys
-   unless asked, per connection, so without this the `ON DELETE CASCADE` on
-   `refresh_tokens.user_id` would be decorative.
-2. **`message_cache.connect()`** — no `REDIS_URL`, missing package, bad URL or
-   unreachable server all log and continue. The cache is simply off.
-3. **`_prune_orphaned_filings()`** — reads every `(user_id, client_id)` pair
-   still in `conversations`, maps them through `scoped_session_id()`, and hands
-   the list to `VectorService.prune_to()`. Any `chat-*` collection not on that
-   list is dropped.
+1. **`init_db()`** — creates tables if absent. On SQLite it also `mkdir`s the parent directory and registers a `connect` listener that issues `PRAGMA foreign_keys=ON` on every connection. SQLite ignores foreign keys unless asked per connection, so without this the `ON DELETE CASCADE` on `refresh_tokens.user_id` and `messages.conversation_id` would be decorative.
+2. **`message_cache.connect()`** — no `REDIS_URL`, missing package, bad URL or unreachable server all log and continue. The cache is simply off.
+3. **`_prune_orphaned_filings()`** — reads every `(user_id, client_id)` pair still in `conversations`, maps them through `scoped_session_id()`, and hands the list to `VectorService.prune_to()`. Any `chat-*` collection not on that list is dropped.
 
-Point 3 is worth dwelling on. Collections **outlive the process**, because the
-dossiers they belong to do. What gets cleared is only what nothing points at
-any more: a dossier deleted while the backend was down, or a crash between
-ingesting a file and recording it. Everything an analyst can still open is
-kept. If pruning throws, it is logged and swallowed — untidy disk is not worth
-costing someone their app at startup.
+Collections **outlive the process**, because the dossiers they belong to do. What gets cleared at startup is only what nothing points at any more: a dossier deleted while the backend was down, or a crash between ingesting a file and recording it in SQL. Everything an analyst can still open is kept. If pruning throws, it is logged and swallowed — untidy disk is not worth costing someone their app at startup.
 
 ### Frontend
 
-`index.html` loads `auth.js` before `app.js`. Each resolves the backend URL
-independently (auth.js cannot depend on app.js having run):
+`index.html` loads `auth.js` before `app.js`. Each resolves the backend URL independently:
 
 ```js
 if (typeof window.__BACKEND_URL__ === "string") {
@@ -135,140 +107,234 @@ return window.location.port === "8000" ? window.location.origin
                                        : "http://localhost:8000";
 ```
 
-`config.js` sets `__BACKEND_URL__`. The checked-in copy sets nothing (dev
-fallback to `:8000`); the Docker image swaps in `config.docker.js`, which sets
-`""` — meaning this page's own origin, because nginx proxies `/api` and
-`/socket.io` through to the backend. One origin in the browser means CORS,
-preflights and the socket handshake all stop being cross-origin problems.
+`config.js` sets `__BACKEND_URL__`. In development, it falls back to `:8000`. In Docker, `config.docker.js` sets `""` — meaning this page's own origin, because nginx proxies `/api` and `/socket.io` through to the backend. One origin in the browser means CORS, preflights and the socket handshake all stop being cross-origin problems.
 
-`app.js` then calls `newDossier()` once at the bottom of the file, so the stage
-is never empty even before sign-in, and `auth.js` calls `Auth.boot()`.
+`app.js` then calls `newDossier()` once at the bottom of the file (so the stage is never empty even before sign-in), and `auth.js` calls `Auth.boot()`.
 
 ---
 
-## Signing in
+## Signup: What happens in the background
 
-### The two tokens
+When a new analyst opens an account:
 
-| | Access | Refresh |
-|---|---|---|
-| Lifetime | `ACCESS_TOKEN_EXPIRE_MINUTES` (15) | `REFRESH_TOKEN_EXPIRE_DAYS` (14) |
-| Sent | On every request | Only to `/api/auth/refresh` |
-| Stored server-side | No | Yes — its `jti`, in `refresh_tokens` |
-| Revocable | No (expires on its own) | Yes |
+```mermaid
+sequenceDiagram
+    participant B as Browser (auth.js)
+    participant A as POST /api/auth/signup
+    participant S as AuthService
+    participant DB as SQL Database
 
-Both are signed with `JWT_SECRET_KEY` and carry a `type` claim that is checked
-on the way in. An access token presented at the refresh endpoint is refused,
-and vice versa — that check is the entire point of the claim.
-
-Leave `JWT_SECRET_KEY` unset and `_secret()` generates a throwaway key, loudly,
-that dies with the process. Every login is invalidated on restart. Fine for
-local work; the warning exists because it must not reach a deployment.
-
-### Refresh rotation and reuse detection
-
-Spending a refresh token revokes it and issues a new pair. So a token arriving
-a second time is either a replay or a stolen copy racing the real client, and
-those cannot be told apart. `AuthService.refresh` therefore:
-
-```python
-if not record.is_usable:
-    await self.revoke_all(session, record.user_id)
+    B->>A: POST { email, name, password }
+    A->>S: auth.signup(session, email, name, password)
+    S->>S: Normalize email (strip & lower)
+    S->>S: Validate length & bcrypt hash password (max 72 bytes)
+    S->>DB: INSERT INTO users (email, name, password_hash)
+    alt Email already registered
+        DB-->>S: IntegrityError (uq_user_email violation)
+        S-->>A: raise EmailTaken (409 Conflict)
+        A-->>B: 409 Conflict {"detail": "An account with that email already exists."}
+    else Success
+        S->>S: Mint Access Token (15 min) & Refresh Token (14 days)
+        S->>DB: INSERT INTO refresh_tokens (jti, user_id, expires_at)
+        S->>DB: COMMIT transaction
+        S-->>A: TokenPair response
+        A-->>B: 201 Created { access_token, refresh_token, expires_in, user }
+        B->>B: Save in localStorage["cfa.session"]
+        B->>B: Start scheduleRefresh() timer
+        B->>B: Dispatch "auth:signedin"
+        B->>B: Connect Socket.IO with Bearer token
+    end
 ```
 
-Every session that user has is dropped. The thief is locked out; the owner
-pays one re-login.
+### 1. What is sent by the frontend:
+* **Endpoint**: `POST /api/auth/signup`
+* **Headers**: `Content-Type: application/json`
+* **Payload**:
+```json
+{
+  "email": "analyst@example.com",
+  "name": "Alex Mercer",
+  "password": "SecurePassword123"
+}
+```
 
-### Not leaking which addresses exist
+### 2. Backend processing:
+1. **Normalization**: `email` is trimmed and converted to lowercase (`email.strip().lower()`).
+2. **Password Validation**:
+   - Must be at least 8 characters (validated by Pydantic schema and frontend).
+   - UTF-8 byte length is checked to be $\le 72$ bytes. Bcrypt silently truncates after 72 bytes, which would make two long passwords sharing a 72-byte prefix interchangeable; the backend explicitly rejects oversized passwords with a `422 Unprocessable Content`.
+3. **Hashing**: Hashed via `bcrypt.hashpw(encoded, bcrypt.gensalt())`.
+4. **Database Insertion**:
+   - Constructs a `User` model and executes `session.flush()`.
+   - If the email is already in use, the unique index on `User.email` raises `IntegrityError`. The backend rolls back and raises `EmailTaken`, returning **`409 Conflict`**.
+5. **Token Issuance**:
+   - Generates a short-lived **Access Token** (15 minutes).
+   - Generates a long-lived **Refresh Token** (14 days) with a random UUID `jti`.
+   - Records the `jti` in the `refresh_tokens` table.
+   - Commits the transaction.
 
-`login` compares against a dummy bcrypt hash when the email is unknown, so an
-unregistered address costs the same time as a wrong password. Wrong password,
-unknown address and disabled account all return the identical message.
+### 3. What is received back:
+* **HTTP Status**: `201 Created`
+* **Response Payload**:
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "expires_in": 900,
+  "user": {
+    "id": "u_01j7abc123456789...",
+    "email": "analyst@example.com",
+    "name": "Alex Mercer"
+  }
+}
+```
 
-### The client side
+### 4. Client-side actions:
+* `auth.js` stores the session in `localStorage` under `cfa.session`.
+* Schedules an automatic background refresh timer `REFRESH_LEAD_MS` (60s) before access token expiry.
+* Fires `window.dispatchEvent(new CustomEvent("auth:signedin"))`.
+* `app.js` catches the event, unlocks the workbench, starts the Socket.IO connection with the access token, and loads the analyst's dossiers.
 
-`auth.js` keeps the pair in `localStorage` under `cfa.session` and runs two
-mechanisms so the analyst never sees an expiry:
+---
 
-- **A timer** that refreshes `REFRESH_LEAD_MS` (60s) before the access token
-  expires, so requests rarely meet a 401 at all.
-- **`authFetch`**, which on a 401 refreshes once and retries. Capped at one
-  retry: if a freshly minted token is still refused, staleness is not the
-  problem and retrying would only spin.
+## Login & Frontend Caching
 
-Concurrent callers share one in-flight refresh (`refreshing` holds the promise).
-Without that, three requests hitting an expired token would spend the refresh
-token three times, and the first two rotations would invalidate the third —
-logging the analyst out.
+### 1. What is sent during login:
+* **Endpoint**: `POST /api/auth/login`
+* **Payload**:
+```json
+{
+  "email": "analyst@example.com",
+  "password": "SecurePassword123"
+}
+```
 
-`Auth.boot()` does not trust the stored access token, which may well have
-expired while the tab was closed. It spends the refresh token for a fresh pair,
-which doubles as proof the session is still good.
+### 2. Backend processing & timing protection:
+1. Normalizes email and queries `User` by email.
+2. **Preventing User Enumeration**: If the email is not found, the backend runs `verify_password(password, _DUMMY_HASH)` against a dummy bcrypt hash. This ensures non-existent accounts take the exact same computation time (~100ms) as real accounts with wrong passwords, preventing attackers from discovering registered emails via timing attacks.
+3. If user exists, verifies `bcrypt.checkpw(password, user.password_hash)` and ensures `user.is_active` is true.
+4. Mints a fresh Access Token and Refresh Token, saves the refresh token's `jti` in `refresh_tokens`, and returns the `TokenPair` payload.
 
-Sign-in and sign-out are announced as `auth:signedin` / `auth:signedout` window
-events rather than by calling into `app.js`, so neither file knows the other's
-shape.
+### 3. What the frontend caches:
+The workbench maintains a clean separation between auth tokens and runtime UI state:
+
+| Storage Location | What is cached | Lifecycle |
+|---|---|---|
+| **`localStorage["cfa.session"]`** | `{ access_token, refresh_token, user }` | Survives tab closes, reloads, and browser restarts. |
+| **`auth.js` in-memory state** | Active `session` object, background refresh timer ID, in-flight refresh promise | Lives for the lifetime of the page tab. |
+| **`app.js` in-memory state** | `state.dossiers` array, `state.active` dossier, `state.turn`, detached DOM run-stacks | Cleared on sign-out or page reload. |
+| **Browser DOM** | Detached `<div class="run-stack">` elements for each open dossier | Preserved in JS memory while switching between dossiers. |
+| **Filings & Messages** | **Not stored in browser localStorage** | Stored securely on the server (SQL + Chroma) and fetched on demand. |
+
+---
+
+## JWT Architecture & Token Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant B as Browser (authFetch)
+    participant A as FastAPI Endpoints
+    participant S as AuthService
+    participant DB as SQL Database
+
+    Note over B,A: 1. Normal Authenticated Request
+    B->>A: GET /api/conversations (Header: Authorization: Bearer <access_token>)
+    A->>A: Decode JWT statelessly (Verify HMAC signature, type="access", exp)
+    A->>DB: SELECT * FROM users WHERE id = sub
+    A-->>B: 200 OK [Dossier list]
+
+    Note over B,A: 2. Access Token Expired (401 Response)
+    B->>A: GET /api/conversations (Header: Bearer <expired_access_token>)
+    A-->>B: 401 Unauthorized ("This access token has expired.")
+
+    Note over B,A: 3. Token Rotation (Shared In-Flight Promise)
+    B->>A: POST /api/auth/refresh { refresh_token: "..." }
+    A->>S: auth.refresh(session, refresh_token)
+    S->>S: Decode JWT (type="refresh", extract jti)
+    S->>DB: SELECT * FROM refresh_tokens WHERE jti = :jti
+    alt Token already revoked (Reuse Attack Detected)
+        S->>DB: UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = :user_id
+        S->>DB: COMMIT
+        S-->>B: 401 Unauthorized (All sessions revoked)
+    else Token valid and usable
+        S->>DB: UPDATE refresh_tokens SET revoked_at = now() WHERE jti = :jti
+        S->>S: Mint new Access Token + new Refresh Token
+        S->>DB: INSERT INTO refresh_tokens (new_jti, user_id, expires_at)
+        S->>DB: COMMIT
+        S-->>B: 200 OK { new access_token, new refresh_token, expires_in, user }
+    end
+
+    Note over B,A: 4. Automatic Request Replay
+    B->>B: Save new tokens in localStorage & in-memory session
+    B->>A: GET /api/conversations (Header: Bearer <new_access_token>)
+    A-->>B: 200 OK [Dossier list]
+```
+
+### Access Token vs Refresh Token
+
+| Property | Access Token | Refresh Token |
+|---|---|---|
+| **Lifetime** | 15 minutes (`ACCESS_TOKEN_EXPIRE_MINUTES`) | 14 days (`REFRESH_TOKEN_EXPIRE_DAYS`) |
+| **Payload Claims** | `{"sub": user_id, "type": "access", "jti": uuid, "iat": ..., "exp": ...}` | `{"sub": user_id, "type": "refresh", "jti": uuid, "iat": ..., "exp": ...}` |
+| **Transmission** | `Authorization: Bearer <token>` on all HTTP requests & Socket.IO handshake | Sent only to `POST /api/auth/refresh` and `POST /api/auth/logout` |
+| **Database Lookup** | **No** (stateless HMAC verification; only verifies user existence) | **Yes** (`jti` verified in `refresh_tokens` table) |
+| **Revocation** | Expires naturally (short lifetime) | Explicitly revoked in database upon rotation or logout |
+
+### Rotation & Reuse Detection
+* Refresh tokens are **single-use**: trading a refresh token revokes it (`revoked_at = utcnow()`) and issues a brand-new token pair.
+* If a revoked refresh token is presented a second time, it indicates either a packet replay or a stolen token racing against the legitimate user.
+* Because the server cannot tell the attacker apart from the owner, it executes **`revoke_all(user_id)`** — revoking every active refresh token for that user across all devices. The thief is locked out, and the owner simply signs in again.
+
+### Frontend Concurrency Lock
+If three API requests hit the server simultaneously when an access token expires:
+1. `authFetch` intercepts the first `401`.
+2. It assigns the in-flight refresh promise to `refreshing`.
+3. The other two requests await the same `refreshing` promise instead of making second and third refresh calls.
+4. This prevents multiple refresh token rotations from invalidating each other.
 
 ---
 
 ## Opening the workbench
 
-`startSession(user)` fires on `auth:signedin`:
+`startSession(user)` fires on the `auth:signedin` event:
 
 ```
 stampUser()  →  socket.connect()  →  GET /api/conversations  →  openDossier(first)
 ```
 
-The socket is opened **first**, deliberately: it does not depend on the ledger,
-and a dossier list that fails to load should not stop the analyst asking a
-question.
+The socket is opened **first**, deliberately: it does not depend on the database ledger, and a dossier list that fails to load should not stop the analyst from asking questions.
 
 ### The socket handshake carries identity
 
 ```js
-const socket = io(BACKEND_URL, { autoConnect: false, auth: (cb) => cb({ token: Auth.accessToken }) });
+const socket = io(BACKEND_URL, {
+  autoConnect: false,
+  auth: (cb) => cb({ token: Auth.accessToken })
+});
 ```
 
-`auth` is a *callback*, not a fixed object, so it is invoked on every attempt
-including reconnections. A socket that drops and comes back an hour later hands
-over the token current at that moment, not the expired one it opened with.
+`auth` is a callback, so it is evaluated on every reconnection attempt. If a connection drops and reconnects later, it sends the current access token, not the expired one.
 
-Server-side, `connect` in `socket_handler.py` resolves the token to a user and
-saves `{user_id, email}` against the sid. No token, or a bad one, raises
-`ConnectionRefusedError` — the handshake fails rather than admitting a
-connection that would reject every query.
-
-`connect_error` on the client distinguishes the two failure kinds by matching
-the message against `/sign|token|session|expire/i`. A rejected token is
-refreshed and the connection retried; anything else is the analyzer being
-unreachable, which retrying does fix.
+Server-side, `connect` in `socket_handler.py` resolves the token to a user and saves `{user_id, email}` against the socket `sid`. If the token is missing or invalid, it raises `ConnectionRefusedError` to reject unauthenticated connections immediately.
 
 ### Restoring the dock
 
-`GET /api/conversations` returns every dossier, most recently spoken in first
-(`ORDER BY last_message_at DESC`, served by the
-`ix_conversation_owner_recent` index). Each row becomes a client-side dossier
-object with its title and filing register — but **not** its runs:
+`GET /api/conversations` returns all dossiers for the logged-in user, most recently active first (`ORDER BY last_message_at DESC`).
+
+Each row becomes a client-side dossier object with its title and filing list, but **not** its message history:
 
 ```js
 dossier.runNo  = Math.ceil((row.message_count || 0) / 2);
 dossier.loaded = !row.message_count;
 ```
 
-The run tally is estimated from the message count (a run is a question plus an
-answer) so the dock can show a number immediately. The runs themselves are
-fetched lazily, the first time each dossier is opened — an analyst with forty
-dossiers should not wait for the thirty-nine they will not look at.
-
-The most recent dossier goes on the stage; a first-time analyst gets an empty
-one from `newDossier()`.
+The run tally is estimated from the message count (each run is a user question + assistant answer). Runs are fetched lazily the first time each dossier is opened so an analyst with dozens of dossiers doesn't download hundreds of messages upfront.
 
 ---
 
 ## Clicking "New dossier"
 
-`newChatBtn` → `newDossier()`. What it does is almost entirely *not* what you
-might expect, so here it is in full:
+When the analyst clicks `+ New`:
 
 ```js
 function newDossier() {
@@ -279,200 +345,149 @@ function newDossier() {
 }
 ```
 
-**No network request is made.** No row is created. No Chroma collection is
-created. A new dossier is, at this instant, nothing but a UUID and an empty
-`<div class="run-stack">` held in browser memory.
+### Crucial Architectural Design:
+* **No network request is made.**
+* **No database row is inserted.**
+* **No Chroma collection is created.**
 
-What `openDossier()` then does:
+A new dossier is simply a client-side JavaScript object with a fresh UUID and an empty detached `<div class="run-stack">` DOM element.
 
-- sets `state.active` to the new dossier;
-- sets **`state.turn = null`** — any run still on the wire belongs to the
-  dossier being left, and `liveTurn()` will now drop everything it sends back;
-- swaps the new (empty) stack into `messagesList` via `replaceChildren`;
-- unhides the welcome hero, since the stack has no children;
-- re-renders the staging tray, the filing register and the dock;
-- stamps the header with `DOSSIER <first 6 chars, uppercased>`;
-- skips hydration, because a brand-new dossier is already `loaded: true`.
+### What `openDossier()` does:
+1. Sets `state.active` to the new dossier.
+2. Sets **`state.turn = null`** (disconnecting any background stream from the previous dossier).
+3. Replaces `messagesList` children with the new dossier's DOM stack via `replaceChildren`.
+4. Shows the welcome hero card.
+5. Updates staging tray, filing register, and sidebar badges.
+6. Displays the header stamp: `DOSSIER <first 6 chars of client_id>`.
 
-The dossiers already open **stay open**, filings and all. Their ledger entries
-are not rebuilt when you come back — each dossier owns its own detached
-`stack` element, so returning to one restores it exactly as it was left, down
-to the faults recorded on individual runs.
+### When the database row actually appears:
+The database row in `conversations` is created **lazily** on the first action that requires server persistence:
 
-The button is a no-op while `state.busy` is true.
-
-### When the row actually appears
-
-The `conversations` row is created lazily, by whichever of these happens first:
-
-| Action | Path | Calls |
+| Action | API / Event | Server Handler |
 |---|---|---|
-| Uploading a filing | `POST /api/upload` | `history.open_conversation()` after the ingest succeeds |
-| Asking a question | socket `query` | `history_service.open_conversation()` before the graph starts |
+| Uploading a filing | `POST /api/upload` | `history.open_conversation()` after file vectorization succeeds |
+| Asking a question | Socket `query` event | `history_service.open_conversation()` before graph execution |
 
-`open_conversation()` is find-or-create, always scoped by `user_id`. It also
-handles the race where two questions arrive into the same new dossier at once —
-the unique constraint catches the second, and the loser rolls back and re-reads
-the row the winner wrote:
+If an analyst opens a new dossier and closes the browser tab without uploading a file or asking a question, **zero bytes of orphan data** are left on the server.
 
-```python
-except Exception:
-    await session.rollback()
-    existing = await self.find(session, user_id, client_id)
-    if existing is None:
-        raise
-    return existing
-```
+---
 
-So a new dossier that is opened and never used costs exactly nothing: close the
-tab and it was never anywhere but memory.
+## Reopening an "Old dossier" (Hydration & Pagination)
+
+When the analyst clicks an existing dossier in the sidebar dock:
+
+1. **Busy Guard**: If `state.busy` is true (a question is currently streaming), switching is refused to avoid cross-wiring outputs.
+2. **DOM Swap**: `messagesList.replaceChildren(dossier.stack)` immediately swaps in the existing runs if already loaded in this browser session.
+3. **Lazy Hydration (First Open)**:
+   If `dossier.loaded` is `false`, `hydrateDossier(dossier)` fetches the newest page of runs:
+   ```
+   GET /api/conversations/{session_id}/messages?limit=30
+   ```
+4. **Backend Message Pagination**:
+   - Queries `messages` table filtered by `conversation_id`, ordered by `seq DESC`.
+   - **Run Alignment**: If the oldest message on a page is an assistant answer whose user question fell on the preceding page, it is popped off so runs are never broken in half.
+   - Computes `next_before_seq` (the cursor for loading older runs).
+5. **Frontend Rendering (`renderStoredRuns`)**:
+   - Walks messages pairing user questions with assistant answers into `<article class="run">` elements.
+   - Parses answer markdown with `marked`.
+   - Restores metadata tags: category badge (`Financials`, `Risks`, etc.), timestamp, run number (`RUN 01`), and attached filing chips.
+   - If `next_before_seq` is not null, prepends a **"load earlier runs"** button at the top of the stack.
 
 ---
 
 ## Attaching a filing
 
-Files are **staged**, not uploaded, when you attach them. `stageFiles()` filters
-by extension (`.pdf .txt .md .csv`), pushes each onto `dossier.pending`, and
-draws a chip in the tray. Nothing leaves the browser yet — a filing rides along
-with a question, so attaching while a run is in flight is refused.
+Files are **staged locally**, not uploaded immediately when attached. `stageFiles()` filters extensions (`.pdf`, `.txt`, `.md`, `.csv`), adds them to `dossier.pending`, and draws chips in the command bar tray.
 
-The upload happens inside `submitQuery()`, *before* the question is emitted, so
-the same run can read what it just attached:
+The upload happens inside `submitQuery()`, **before** the question is emitted, so the subsequent analysis run can immediately search what was just uploaded:
 
 ```js
 if (files.length) {
   setWork(turn, "adding the filing");
   const ok = await uploadPending(files, turn);
-  if (!ok) { /* abort the run */ }
+  if (!ok) { /* abort run */ }
 }
 ```
 
-`uploadPending` posts each file to `/api/upload` through `authFetch` (so an
-expiry mid-upload is refreshed and the upload replayed rather than lost) and
-keys everything off `turn.sessionId` rather than the live dossier — a run
-uploads into, and asks of, the dossier it was opened in, even if the analyst
-has since switched.
-
-### Server side
-
-`POST /api/upload` requires `session_id` as a form field. Then:
-
-1. `VectorService.ingest_file()` — PDF via `pypdf` (one document per non-empty
-   page), or UTF-8 decode for text formats.
-2. `RecursiveCharacterTextSplitter`, 1000 characters with 200 overlap.
-3. `aadd_documents()` into the collection named
-   `chat-<sha256(user_id:client_id)[:32]>`.
-4. **Only then** `open_conversation()` + `record_filing()` — the register never
-   lists a filing that is not actually searchable.
-
-PDFs fail in specific, nameable ways, and each comes back as a `ValueError`
-carrying a reason the analyst can act on:
-
-| Condition | Message |
-|---|---|
-| `PyPdfError` on open | "…is not a readable PDF — the file looks corrupt or incomplete." |
-| Encrypted, empty password fails | "…is password protected. Remove the password and upload it again." |
-| No page yielded text | "…No readable text found… Scanned PDFs need to be run through OCR." |
-| One page throws | Skipped, counted, logged — one broken page does not cost the filing |
-
-`ValueError` becomes a 400; anything else (the embedding model unreachable, say)
-becomes a 500 whose `detail` names the file — which is what surfaces in the
-browser as `Could not add mock_10k_filing.txt: …`.
-
-The response echoes back the **client's** `session_id`, not the scoped one. The
-namespacing is a backend detail.
+### Server-side Ingestion (`POST /api/upload`):
+1. **Extraction**:
+   - PDF: parsed page-by-page via `pypdf` (extracts text and skips blank/corrupt pages).
+   - Text/MD/CSV: decoded as UTF-8.
+2. **Chunking**: `RecursiveCharacterTextSplitter` divides text into 1,000-character chunks with 200-character overlap.
+3. **Vectorization**: Embedded via `nomic-embed-text` and stored in Chroma collection `chat-<sha256(user_id:client_id)[:32]>`.
+4. **Registration**: Calls `open_conversation()` and `record_filing()` in the SQL database, adding metadata (name, chunk count, timestamp) to `conversation.filings`.
 
 ---
 
-## Asking a question
+## Asking a question in a dossier (New or Old)
 
-The whole path, end to end:
+The complete end-to-end execution flow:
 
 ```mermaid
 sequenceDiagram
-    participant B as Browser
+    participant B as Browser (app.js)
     participant S as socket_handler
     participant H as HistoryService
-    participant G as Graph
-    participant O as Ollama
+    participant R as Redis Cache
+    participant DB as SQL Database
+    participant G as LangGraph Pipeline
+    participant C as Chroma Vector DB
+    participant O as Ollama LLM
 
-    B->>S: query {query, session_id, title, files}
+    B->>B: Submit query (stage run in DOM)
+    opt Staged Files Exist
+        B->>S: POST /api/upload (Ingest filings into Chroma)
+    end
+    B->>S: socket.emit("query", { query, session_id, title, files })
     S->>H: open_conversation(user_id, client_id)
+    H->>DB: Find or create Conversation row
     S->>H: context_for(conversation)
-    Note over H: summary + trimmed tail<br/>read BEFORE the question is recorded
-    S->>H: record_message(user, question)
-    S->>G: query_stream(question, scoped_id, title, history)
-    G-->>B: run_started
-    G->>G: retrieve (Chroma top-4)
-    G-->>B: status: retrieve
-    G->>O: classify + name (parallel)
-    G-->>B: status: route, title, route
-    G->>O: analysis prompt
-    O-->>B: token, token, token…
-    G-->>B: done
-    S->>H: record_message(assistant, answer)
-    S->>H: schedule_summary()  (fire and forget)
+    H->>R: Read hot tail messages (fallback to DB)
+    H->>H: Trim to last 10 messages & token budget (1500 tokens)
+    S->>H: record_message(role="user", content=query)
+    H->>DB: INSERT INTO messages (seq, role, content, tokens)
+    H->>R: Append user message to Redis tail
+    S->>G: query_stream(query, scoped_id, title, history)
+    G-->>B: socket.emit("run_started", { run_id })
+
+    par Retrieval & Routing
+        G->>C: Chroma similarity search (top-4 chunks)
+        C-->>G: Document chunks
+        G-->>B: socket.emit("status", { stage: "retrieve" })
+    and
+        G->>O: Classify intent & generate title (if unnamed)
+        O-->>G: Category (e.g. "risks") & Title
+        G-->>B: socket.emit("route", { category: "risks" })
+        G-->>B: socket.emit("title", { title: "..." })
+    end
+
+    G->>O: Stream analysis prompt (Chunks + History + Query)
+    loop Token Generation
+        O-->>G: token chunk
+        G-->>B: socket.emit("token", { content: token })
+    end
+    G-->>B: socket.emit("done", { run_id, category, title })
+
+    S->>H: record_message(role="assistant", content=full_answer)
+    H->>DB: INSERT INTO messages (status="ok", meta={category})
+    H->>R: Append assistant message to Redis tail
+    S->>H: schedule_summary(conversation.id) (Background task)
 ```
 
-### Before the graph
+### 1. Context Assembly (Before the Graph)
+* `HistoryService.context_for()` reads the rolling summary and recent message tail.
+* Failed runs (`status != "complete"`) and their accompanying questions are filtered out so errors do not pollute future context.
+* History is formatted into a single background system block to avoid confusing the model with conflicting prompt turns.
 
-The question is recorded **after** `context_for()` is read. Reading it the other
-way round would put the question in the prompt twice — once as history, once as
-the question.
+### 2. LangGraph Execution
+* **`retrieve` Node**: Searches Chroma for top-4 chunks matching the query in this dossier's collection.
+* **`no_filing` Branch**: If no filings exist in the dossier, returns a clear instruction to attach a filing rather than hallucinating financial data.
+* **`router` Node**: Classifies query into one of 8 categories (`financials`, `compliance`, `risks`, `shareholding`, `governance`, `mda`, `summary`, `qa`). If this is the dossier's first query, names the dossier in parallel.
+* **Analysis Node**: Evaluates the category prompt, injecting retrieved chunks, rolling summary, and recent context.
 
-Both reads happen in one short-lived `SessionLocal()` block that closes before
-the graph starts. An answer can take a minute, and a pooled connection held
-open across it is a connection nothing else can use.
-
-An empty question with a file attached falls back to:
-
-> "Provide an executive summary and financial overview of this filing."
-
-because the router still needs something to classify.
-
-The **stored** title wins over the one the browser sent — the server named this
-dossier, and a client that has fallen behind should not be able to rename it.
-
-### The event stream
-
-Every event carries the `session_id` it was produced for. The client's
-`liveTurn()` uses it as a two-part gate:
-
-```js
-if (!turn || turn.sessionId !== state.active.id) return null;
-if (data?.session_id && data.session_id !== state.active.id) return null;
-```
-
-A run must have been opened in the dossier on screen *and* the server must have
-stamped the event with that same dossier. Anything else — a run cut short by a
-dropped connection whose events arrive after the analyst moved on — is dropped
-rather than written into whatever is on screen now.
-
-`title` and `done` are the exceptions: `nameDossier()` runs *before* the
-staleness check, keyed off the id in the event, because a name is worth keeping
-even for a dossier the analyst has already left.
-
-Progress is translated into the analyst's terms; nothing about graph internals
-reaches the UI except the category tag:
-
-| `status.stage` | Shown as |
-|---|---|
-| `retrieve` | "reading the filing" |
-| `route` | "working out what you're asking" |
-| `analyze` | "writing the *<category>* answer" |
-
-### After the answer
-
-`_record_answer()` writes the assistant message in its own fresh session. It
-**never raises** — losing the record of an answer the analyst has already read
-is not worth turning into an error they must act on.
-
-A failed run is still recorded, with `status="error"` and the reason in
-`meta.error`. The analyst should see on their next visit that the question was
-asked and did not land, rather than find it missing. It is kept out of what
-later runs are *sent*, though — see below.
-
-Then `schedule_summary()` fires, off the critical path.
+### 3. Post-Run Persistence & Rolling Summary
+* Assistant answer is saved to `messages` SQL table and pushed to Redis.
+* `schedule_summary()` checks if unsummarized messages exceed threshold (24). If so, an asynchronous background task folds older messages into `conversation.summary`.
 
 ---
 
@@ -485,192 +500,33 @@ Then `schedule_summary()` fires, off the critical path.
                        └─> no_filing ───────────────────> END
 ```
 
-Compiled with **no checkpointer** — a run goes straight through with nothing to
-pause on. Each run gets a fresh `thread_id` (the run id), so concurrent runs
-never share state.
+Compiled with **no checkpointer** — a run goes straight through without pausing. Each run gets a fresh `thread_id` (the UUID `run_id`), ensuring concurrent runs never collide.
 
-### `retrieve`
-
-Top-4 chunks from *this dossier's* collection, joined and clipped to 3000
-characters. No fallback to other dossiers: if nothing has been uploaded here,
-the answer is built without a filing rather than out of someone else's.
-
-Retrieval runs **before** routing so the router classifies with the filing in
-hand and the analysis node inherits the same context.
-
-### `no_filing`
-
-If `retrieve` produced nothing, the run short-circuits here with a fixed message
-asking for a filing. Without this branch the analysis prompt would run on an
-empty context and the model would invent a plausible-looking report out of
-nothing.
-
-### `router`
-
-Two LLM calls, and on the first run of a dossier they are issued in parallel:
-
-```python
-category, title = await asyncio.gather(
-    self.router.classify(query),
-    self.router.name_chat(query),
-)
-```
-
-so the opening question does not wait longer for its answer than the ones that
-follow. A dossier is named **once**; every later run arrives carrying the name
-and the `if title:` branch skips naming entirely.
-
-Both calls are defensive about small-model output. `classify` strips
-punctuation and takes the first word that is a known category, falling back to
-`qa`. `_clean_title` drops chat-template role echoes (llama3.1 likes to open
-with a bare `assistant`), strips `Title:` lead-ins and wrapping punctuation,
-collapses whitespace, and clips to 42 characters on a word boundary. Naming
-never raises — a dossier that cannot be named still has to get its answer, so
-it falls back to "Untitled dossier".
-
-### The analysis nodes
-
-Eight of them, one per category, all built by the same factory with
-`node.__name__ = category`. That name is what LangGraph reports as
-`langgraph_node`, and it is how `ChatService.query_stream` decides which tokens
-belong to the analyst:
-
-```python
-if metadata.get("langgraph_node") not in CATEGORIES:
-    continue
-```
-
-The router's own LLM call streams through the same channel and would otherwise
-leak its answer into the UI.
-
-Categories are defined in exactly one place — `core/categories.py` — so the
-router, the graph and `config/prompts.yaml` cannot drift apart.
+Categories are strictly defined in `core/categories.py` and mapped to prompts in `config/prompts.yaml`.
 
 ---
 
 ## How history is retrieved
 
-**Two different histories come out of one table.** Keeping them apart is the
-whole design of `HistoryService`.
+Two distinct views of history are generated from the same `messages` table:
 
-### Display history — everything
+### 1. Display History (For the Analyst)
+* **Endpoint**: `GET /api/conversations/{session_id}/messages`
+* Complete, untrimmed, chronological ledger paged backwards from newest to oldest by sequence number `seq`.
 
-`GET /api/conversations/{client_id}/messages`. Untrimmed, in order, paged. The
-analyst's record of what was asked and answered should not change shape as a
-dossier gets long.
-
-Paged **from the end backwards** — opening a dossier should show the last thing
-said — and cursored on `seq`, not an offset, so a message arriving mid-scroll
-cannot shift the page under the reader.
-
-Pages are **aligned to whole runs**:
-
-```python
-while len(messages) > 1 and messages[0].role != ROLE_USER:
-    messages.pop(0)
-```
-
-An answer whose question fell on the previous page is left for that page to
-carry. Costs at most one message off the front, and means the client can pair
-question with answer within one page — `renderStoredRuns()` is a straight walk,
-never a stitch across two pages.
-
-`next_before_seq` is the cursor for the page *before* this one, and is null once
-`seq == 1` is reached. That null is what removes the "load earlier runs" button.
-
-### Context history — what the model is actually sent
-
-`HistoryService.context_for()`. Four filters, in order:
-
-1. **Already summarised** — drop anything at or below
-   `conversation.summary_through_seq`. It is represented by the summary now.
-2. **Failed runs** — drop anything with `status != "complete"`. Conditioning the
-   next answer on an error message only teaches the model to apologise.
-3. **A question whose run failed** — dropped along with the failure. On its own
-   it reads as something the analyzer was asked and declined to answer, which is
-   not what happened:
-   ```python
-   answered = [m for i, m in enumerate(fresh)
-               if m["role"] != ROLE_USER
-               or (i + 1 < len(fresh) and fresh[i + 1]["role"] == ROLE_ASSISTANT)]
-   ```
-4. **The window and the budget** — last `HISTORY_CONTEXT_MESSAGES` (10), then
-   trimmed to `HISTORY_CONTEXT_TOKENS` (1500) *minus what the summary costs*.
-   Walked newest-first so what falls off is always the oldest, and at least one
-   message is always kept.
-
-The token pass reads the counts stored on each row, which is what they are for.
-They are estimates — `core/tokens.py` takes the larger of chars/3.6 and
-words×1.35, erring high on purpose. A history trimmed slightly too hard still
-answers; one trimmed too softly overflows the window and fails.
-
-### Where the tail comes from
-
-```python
-cached = await self.cache.recent(conversation.id)
-if cached is not None:
-    return cached
-# ... otherwise read the DB and prime the cache
-```
-
-The Redis key holds the tail as a list, newest last, trimmed to
-`REDIS_HOT_WINDOW`. Because the whole key expires at once, a key that exists
-holds the *full* window — a hit never has to wonder whether it is looking at a
-partial tail.
-
-Three details that follow from that:
-
-- **`append` does not create the key.** A conversation nobody has read would end
-  up cached as a one-message tail, which a later read would take for the whole
-  window. Only `prime` creates it.
-- **Reads touch the TTL**, so an active dossier stays hot and an abandoned one
-  falls out on its own.
-- **A Redis error disables the cache** rather than raising. Reconnecting per
-  request would mean paying a timeout per request for as long as Redis is down;
-  the database is both correct and faster than that. The cache returns on
-  restart.
-
-`_widen_hot_window` in `config.py` forces `REDIS_HOT_WINDOW >=
-HISTORY_CONTEXT_MESSAGES`. A cache holding fewer messages than a run asks for
-answers every request as a miss — worse than no cache, because you pay the
-round trip *and* read the database.
-
-### How the history reaches the prompt
-
-`AnalysisService._history_message()` builds **one system message**, not a run of
-alternating turns:
-
-```
-Earlier in this dossier (background — the filing above is the source of fact):
-
-Summary of earlier exchanges:
-…
-
-Recent exchanges:
-Analyst: …
-Analyzer: …
-
-Use this only to resolve what the analyst is referring to and to avoid
-repeating yourself. Do not treat it as evidence about the filing.
-```
-
-The reason is that half the category prompts carry the question *inside* the
-system message. Replaying history as real turns would land it after the question
-in some categories and before it in others; one labelled block reads the same
-way in both. Each message is clipped to 800 characters so one long report inside
-the budget cannot crowd out the turns around it.
-
-For the report-style prompts that take only `{context}`, the question is
-appended afterwards as "Analyst request: … Produce the report above, giving
-extra emphasis to this request."
+### 2. Context History (For the LLM Prompt)
+* **Method**: `HistoryService.context_for()`
+* Bounded strictly by token and message limits:
+  1. Drops messages already incorporated into `conversation.summary`.
+  2. Drops failed runs and unanswered user prompts.
+  3. Takes the last 10 messages (`HISTORY_CONTEXT_MESSAGES`).
+  4. Trims to 1,500 tokens (`HISTORY_CONTEXT_TOKENS`) minus the summary cost.
 
 ---
 
 ## The rolling summary
 
-Fired by `schedule_summary()` after the answer has been delivered — never
-before the next one. Summarising is another LLM call, and no analyst should wait
-on last week's history being compressed.
+Triggered in the background after an answer completes:
 
 ```python
 if self.summarizer is None or conversation_id in self._summarising:
@@ -680,68 +536,15 @@ task = asyncio.create_task(self._summarise(conversation_id))
 self._summary_tasks.add(task)
 ```
 
-Two guards worth noting. `_summarising` stops a burst of questions starting the
-same fold several times. `_summary_tasks` holds a **strong reference** — asyncio
-only keeps a weak one to a running task, so a fold with no reference anywhere
-can be garbage collected mid-await and simply never finish.
-
-The fold itself:
-
-- Runs only when more than `HISTORY_SUMMARY_THRESHOLD` (24) messages sit
-  unsummarised.
-- Leaves the last `HISTORY_CONTEXT_MESSAGES` verbatim — they are what the next
-  question is most likely to be about.
-- Is **cumulative**: the summariser is given the previous summary plus only the
-  turns since, so the cost does not grow with conversation length.
-- Clips each message to 1200 characters for the summariser's own context, and
-  the resulting summary to 1500 characters, since it rides in every subsequent
-  prompt.
-- On failure, logs and leaves the summary alone. The conversation still answers;
-  it just carries a longer unsummarised tail until the next attempt. A bad
-  summary would silently distort every answer that followed, so "not yet" is the
-  right outcome.
-
-The summariser is wired in at `api/deps.py`, after the chat service exists:
-
-```python
-history_service.attach_summarizer(chat_service.summary.summarise)
-```
-
-The same model that answers also keeps the summaries.
-
----
-
-## Reopening a dossier
-
-Clicking a row in the dock calls `openDossier()`. If `dossier.loaded` is false,
-`hydrateDossier()` fetches the newest page and draws it.
-
-`renderStoredRuns()` walks the page pairing user messages with the answer that
-follows. A stored answer with `status === "error"` is drawn as a fault block
-rather than as prose. `meta.category` restores the category tag; `meta.files`
-restores the filing chips on the run; `meta.run` restores the run number.
-
-That `meta.run` is stamped at write time, in `record_message`:
-
-```python
-if role == ROLE_USER and "run" not in meta:
-    meta["run"] = await self._run_number(session, conversation.id)
-```
-
-The ledger numbers **runs**, not messages, and a client that has paged back into
-an old dossier has no way to work out where in the count it is standing — so the
-server records it once, when it knows.
-
-Hydration failure is not fatal: `dossier.loaded` is set to `true` anyway (so it
-does not retry on every open), a toast explains, and asking a question still
-works — the run appends to whatever the backend already has, which is the record
-that matters.
+* Runs when $> 24$ messages sit unsummarized.
+* Preserves the most recent 10 messages verbatim.
+* **Cumulative**: compresses existing summary + newly unsummarized turns, keeping LLM prompt size bounded regardless of conversation length.
 
 ---
 
 ## Switching dossiers mid-run
 
-You cannot, and the refusal is explicit:
+Switching dossiers while a query is running is prevented:
 
 ```js
 if (state.busy) {
@@ -750,60 +553,66 @@ if (state.busy) {
 }
 ```
 
-A run reads and answers within one dossier; switching mid-run would leave it
-writing into a ledger that is no longer on screen. The same guard blocks new
-dossiers, discarding, attaching files and signing out while busy.
-
-If the connection drops mid-run, `disconnect` removes the `is-live` class,
-toasts, and calls `finishTurn()` — the run is over from the browser's point of
-view. The backend, meanwhile, still records whatever it has.
+This prevents streaming tokens from one dossier from being written into another dossier's active DOM stack.
 
 ---
 
-## Discarding a dossier
+## Discarding / Deleting a dossier
 
-`clearChatBtn` → `discardDossier()` → `DELETE /api/conversations/{client_id}`.
+When an analyst clicks `Clear` / Discard:
 
-Both halves go, in this order:
-
-```python
-deleted = await history.delete_conversation(session, user.id, session_id)
-dropped = chat.delete_session(scoped_session_id(user.id, session_id))
+```
+DELETE /api/conversations/{client_id}
 ```
 
-Messages cascade off the conversation row; the cache key is dropped; then the
-Chroma collection. A conversation whose messages were kept while its filings
-were dropped would answer follow-ups out of a summary of documents it can no
-longer cite.
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant API as DELETE /api/conversations/{id}
+    participant DB as SQL Database
+    participant R as Redis Cache
+    participant C as Chroma Vector DB
 
-Client-side, the dossier is spliced out and its neighbour opened. **The
-workbench always has one dossier open**, so discarding the last one calls
-`newDossier()` rather than leaving an empty stage.
+    B->>API: DELETE /api/conversations/{client_id}
+    API->>DB: DELETE FROM conversations WHERE user_id = ... AND client_id = ...
+    Note over DB: ON DELETE CASCADE removes all messages rows
+    API->>R: cache.drop(conversation_id)
+    API->>C: VectorService.delete_session(scoped_id)
+    Note over C: Drops collection "chat-<hash>" from disk
+    API-->>B: 200 OK {"status": "ok", "deleted": true, "filings_dropped": true}
+    B->>B: Splice dossier from state.dossiers
+    B->>B: Open adjacent dossier or call newDossier()
+```
 
-A failed DELETE is swallowed. The dossier is gone from the workbench either way,
-and a record left behind on the backend reappears on the next sign-in rather
-than being lost — the better way round to fail.
+### Deletion steps in strict order:
+1. **SQL Database**: Deletes `Conversation` row. Foreign keys with `ON DELETE CASCADE` automatically delete all child rows in `messages`.
+2. **Redis Cache**: Drops the hot tail key `chat:recent:{conversation_id}`.
+3. **Chroma Vector Store**: Drops collection `chat-<hash>`, wiping all chunk embeddings from disk.
+4. **Client Workbench**: Removes dossier from sidebar dock and opens the nearest neighbor (or creates a new blank dossier if none remain).
+
+---
+
+## Complete CRUD Matrix
+
+| Operation | Action / Trigger | Protocol & Endpoint | Request Body / Params | Backend Operations | Frontend UI State |
+|---|---|---|---|---|---|
+| **Create Dossier** | Click "+ New" | Client-side (lazy) | None | Zero backend ops initially; persisted on 1st message or file upload | Creates JS object, allocates new UUID, swaps empty DOM stack |
+| **Read (List)** | App launch / Login | `GET /api/conversations` | Headers: `Authorization: Bearer <token>` | `SELECT * FROM conversations WHERE user_id = ... ORDER BY last_message_at DESC` | Renders sidebar dock list with titles, filing counts, and estimated run tallies |
+| **Read (Messages)** | Select old dossier | `GET /api/conversations/{id}/messages` | `?limit=30&before_seq=...` | Reads paged rows from `messages`, aligns whole runs, computes pagination cursor | Renders question/answer runs, parses markdown, attaches category tags |
+| **Update (Rename)** | First query or manual | `PATCH /api/conversations/{id}` | `{"title": "FY24 Revenue Review"}` | Updates `title` in `conversations` table | Updates header stamp and sidebar row label |
+| **Upload Filing** | Attach & Send | `POST /api/upload` | Multipart Form: `file`, `session_id` | Parses PDF/TXT, splits chunks, saves embeddings in Chroma, appends to `conversation.filings` | Renders filing chip in tray, updates active filing badge |
+| **Ask / Stream** | Send query | Socket.IO `query` event | `{query, session_id, title, files}` | LangGraph retrieves Chroma chunks, routes category, streams tokens, saves answer to SQL & Redis | Streams live text into markdown body, renders category badge |
+| **Delete Dossier** | Click "Clear" / Discard | `DELETE /api/conversations/{id}` | Headers: `Authorization: Bearer <token>` | Cascades delete in SQL `conversations`/`messages`, drops Redis key, deletes Chroma collection | Slices dossier from dock, mounts neighbor or fresh dossier |
 
 ---
 
 ## Signing out
 
-`Auth.logout()` dispatches **`auth:signingout` before clearing the session**.
-Listeners run synchronously, so any request the workbench needs to get out —
-ones needing a credential that is still good — are already on the wire by the
-time `clear()` runs.
-
-Then the local half happens unconditionally, and the server call is best-effort
-with `keepalive: true`. A logout that leaves the analyst signed in because the
-network was down is worse than one whose refresh token outlives its own expiry
-unrevoked.
-
-`endSession()` in app.js clears the whole stage, not just the connection, so the
-next analyst on this browser is not handed the last one's questions on screen.
-
-Note the asymmetry: revoking a refresh token does **not** invalidate outstanding
-access tokens. They are not looked up in the database — that is the point of
-them — so revocation takes effect on the access token's own short expiry.
+1. `Auth.logout()` dispatches **`auth:signingout`** window event.
+2. Synchronous event listeners finish any pending work while the access token is still valid.
+3. `localStorage.removeItem("cfa.session")` removes tokens from browser storage.
+4. Makes a best-effort `POST /api/auth/logout` with `keepalive: true` to mark the refresh token as revoked in the database.
+5. `endSession()` in `app.js` disconnects Socket.IO, clears all in-memory dossiers, and resets the UI to a blank stage.
 
 ---
 
@@ -811,47 +620,32 @@ them — so revocation takes effect on the access token's own short expiry.
 
 | Data | Store | Survives restart? | Survives dossier delete? |
 |---|---|---|---|
-| Accounts, password hashes | `users` | yes | — |
-| Refresh token `jti`s | `refresh_tokens` | yes | cascades on account delete |
-| Dossiers, titles, filing register | `conversations` | yes | no |
-| Every message + token count | `messages` | yes | no (cascades) |
-| Rolling summary | `conversations.summary` | yes | no |
-| Filing text + embeddings | Chroma `chat-<hash>` | yes | no |
-| Recent message tail | Redis | no (and fine) | key dropped |
-| Staged-but-unsent files | Browser memory | no | no |
-| A never-used new dossier | Browser memory | no | — |
-
-`Message.meta` is a JSON column, `jsonb` on Postgres. What hangs off a message
-varies by what produced it — attached filings, the run that answered, the reason
-a run failed — and none of it is queried structurally, so it lives there rather
-than as a column each new kind of message would add.
-
-`Message.seq` orders a conversation, not `created_at`: two messages in the same
-millisecond would be a coin toss, and pagination needs a total order.
-`_next_seq()` reads the max from `messages` rather than the conversation's
-counter, so a counter that has drifted cannot hand out a position already taken.
+| Accounts, password hashes | SQL `users` | Yes | N/A (cascades on account delete) |
+| Refresh token `jti`s | SQL `refresh_tokens` | Yes | Cascades on account delete |
+| Dossiers, titles, filing register | SQL `conversations` | Yes | Deleted |
+| Every message + token count | SQL `messages` | Yes | Deleted (cascades) |
+| Rolling summary | `conversations.summary` | Yes | Deleted |
+| Filing text + vector embeddings | Chroma `chat-<hash>` | Yes | Collection dropped |
+| Hot message tail | Redis `chat:recent:*` | No (cache only) | Key dropped |
+| Staged-but-unsent files | Browser memory | No | Cleared |
+| Empty new dossier | Browser memory | No | Cleared |
 
 ---
 
 ## What happens when things fail
 
-| Failure | Behaviour |
+| Failure Scenario | System Behavior |
 |---|---|
-| Redis down or absent | Cache disabled, every read goes to the database. Correct, just slower. |
-| Summariser call fails | Logged. Conversation keeps a longer unsummarised tail, retried after the next run. |
-| Pruning fails at startup | Logged. Orphaned collections stay on disk; nothing can reach them. |
-| Naming a dossier fails | Falls back to "Untitled dossier". The answer is unaffected. |
-| Router returns nonsense | Falls back to the `qa` category. |
-| No filing in the dossier | `no_filing` node returns a fixed "attach a filing" message. |
-| Answer recording fails | Logged only. The analyst has already read the answer. |
-| Run fails mid-stream | Recorded with `status="error"`, shown as a fault, excluded from future context. |
-| Access token expires mid-request | `authFetch` refreshes once and retries. |
-| Access token expires on the socket | `connect_error` → refresh → reconnect with the new token. |
-| Refresh token reused | Every session for that user is revoked. |
-| Backend unreachable | `fetch` rejects with `TypeError`; the UI says so specifically rather than blaming the file or the credentials. |
-| Ollama unreachable | Upload returns a 500 whose detail names the file; queries surface as an `error` event. |
-
-The pattern throughout: **anything that is not the analyst's answer fails soft.**
-Housekeeping, caching, summarising and naming all degrade rather than propagate.
-The things that do fail loudly are the ones where continuing would produce a
-wrong answer — an unreadable filing, a missing dossier id, an expired session.
+| **Redis down / unreachable** | Cache disabled automatically; all reads go directly to SQL database without errors. |
+| **Summarizer LLM fails** | Logged and swallowed; unsummarized tail is preserved and retried on the next run. |
+| **Pruning fails at startup** | Logged and swallowed; orphaned Chroma collections remain safely isolated on disk. |
+| **Dossier naming fails** | Falls back to "Untitled dossier"; answer generation continues unaffected. |
+| **Router fails classification** | Falls back to default `qa` category. |
+| **No filings attached** | `no_filing` node returns a polite prompt asking to upload a filing. |
+| **Answer recording fails** | Logged; the analyst has already received the streamed answer in the UI. |
+| **Run fails mid-stream** | Stamped with `status="error"`, displayed as a fault block in UI, and omitted from future LLM history context. |
+| **Access token expires mid-request** | `authFetch` transparently refreshes tokens once and retries the request. |
+| **Access token expires on socket** | `connect_error` triggers token refresh and reconnects with new token. |
+| **Refresh token reused** | Every session for that user account is revoked immediately across all devices. |
+| **Backend unreachable** | Fetch fails with `TypeError`; UI displays explicit server connection error toast. |
+| **Ollama unreachable** | File upload returns 500 naming the file; chat query emits an error toast. |
