@@ -205,16 +205,14 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-# Local account database (SQLite). Real deployments point DATABASE_URL
-# at a server instead; either way the accounts never belong in git.
-backend/data/*.db
+# Runtime logs (including rotated files)
+logs/
+*.log
+
+# Local runtime data: the Chroma vector store and the account SQLite
+# database. Both are rebuilt or provisioned per environment; real
+# deployments point DATABASE_URL at a server instead.
+backend/data/
 *.db-journal
 *.db-wal
 *.db-shm
-
-# Runtime logs and the Chroma vector store ARE tracked in this repo
-# (see backend/logs/ and backend/data/chroma_db/) so deployments and
-# reviewers get the same corpus. Only the account database stays out.
-!logs/
-!*.log
-!backend/data/
