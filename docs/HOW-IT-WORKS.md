@@ -5,7 +5,9 @@ things an analyst does: signing in, opening a dossier, attaching a filing,
 asking a question, coming back tomorrow.
 
 This is the *behaviour* document. Setup, configuration values and the API
-reference live in the [README](../README.md); nothing here repeats them.
+reference live in the [README](../README.md); the real-time transport — what
+Socket.IO is, how it is mounted onto FastAPI, and how to deploy it — is in
+[SOCKETIO.md](SOCKETIO.md). Nothing here repeats them.
 
 ---
 

@@ -10,6 +10,11 @@ For a walkthrough of what the app actually does — what happens when you click
 "New dossier", how history is retrieved and trimmed, how a run travels from the
 browser to the graph and back — see **[docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md)**.
 
+The real-time layer has a guide of its own: **[docs/SOCKETIO.md](docs/SOCKETIO.md)**
+covers Socket.IO from first principles through to production — what it is, how
+it is mounted onto FastAPI, how the connection is authenticated, and what nginx
+has to be told for a token stream to arrive smoothly.
+
 ---
 
 ## Architecture
@@ -104,7 +109,8 @@ Corporate_Filing_Analyzer_Agent/
 ├── docker-compose.yml          # Workbench + API + Postgres + Redis
 ├── .env.example                # Settings compose reads; copy to .env
 ├── docs/
-│   └── HOW-IT-WORKS.md         # Walkthrough of every flow, from sign-in to summarisation
+│   ├── HOW-IT-WORKS.md         # Walkthrough of every flow, from sign-in to summarisation
+│   └── SOCKETIO.md             # Socket.IO from zero to production: ideas, this app, deployment
 ├── deploy/
 │   └── cnpg-cluster.yaml       # The same database as a CloudNativePG Cluster (Kubernetes)
 ├── backend/
