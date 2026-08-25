@@ -6,6 +6,11 @@ Dossiers persist. Every question and answer is a row, every filing stays in its
 dossier's collection, and signing in resumes the work rather than starting it
 over — see [Conversation history](#conversation-history).
 
+Confused about how one socket serves every conversation, what clicking "New
+dossier" actually does, or where a follow-up's history comes from? Start with
+**[docs/DOSSIER-FAQ.md](docs/DOSSIER-FAQ.md)** — plain answers, one question at
+a time.
+
 For a walkthrough of what the app actually does — what happens when you click
 "New dossier", how history is retrieved and trimmed, how a run travels from the
 browser to the graph and back — see **[docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md)**.
@@ -119,6 +124,7 @@ Corporate_Filing_Analyzer_Agent/
 ├── docker-compose.yml          # Workbench + API + Postgres + Redis
 ├── .env.example                # Settings compose reads; copy to .env
 ├── docs/
+│   ├── DOSSIER-FAQ.md          # Plain answers: one socket, many dossiers, ids, history, storage
 │   ├── HOW-IT-WORKS.md         # Walkthrough of every flow, from sign-in to summarisation
 │   ├── SOCKETIO.md             # Socket.IO from zero to production: ideas, this app, deployment
 │   ├── FRONTEND-SOCKETIO.md    # What the backend does for each workbench operation, handler by handler

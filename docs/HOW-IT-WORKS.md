@@ -4,6 +4,10 @@ A comprehensive walkthrough of what actually happens inside the app, organized a
 actions an analyst takes: signing up, logging in, opening a new dossier, reopening an old dossier,
 attaching filings, asking questions, deleting dossiers, and managing sessions.
 
+New to the app? [DOSSIER-FAQ.md](DOSSIER-FAQ.md) answers the common questions —
+one socket for every dossier, what "New dossier" does, where history comes from —
+in plain language first.
+
 This is the *architecture and behavior* document. Setup, configuration values, and the general
 reference live in the [README](../README.md); the real-time transport — how Socket.IO is mounted
 onto FastAPI and how events are streamed — is in [SOCKETIO.md](SOCKETIO.md), and what the backend

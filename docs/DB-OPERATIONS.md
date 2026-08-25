@@ -9,6 +9,7 @@ covers all of them.
 
 | Where to look | For |
 | --- | --- |
+| [DOSSIER-FAQ.md](DOSSIER-FAQ.md) | the simple version — what gets saved when, in plain answers |
 | **this file** | the schema, and every read and write the app makes |
 | [FRONTEND-SOCKETIO.md](FRONTEND-SOCKETIO.md) | what the backend does for each workbench operation |
 | [SOCKETIO.md](SOCKETIO.md) | the real-time transport itself |

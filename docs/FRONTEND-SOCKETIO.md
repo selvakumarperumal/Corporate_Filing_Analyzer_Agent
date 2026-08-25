@@ -20,6 +20,7 @@ frontend code.
 
 | Where to look | For |
 | --- | --- |
+| [DOSSIER-FAQ.md](DOSSIER-FAQ.md) | the simple version — one socket for every dossier, ids, history, in plain answers |
 | this file | what the backend does for each thing the analyst does |
 | [SOCKETIO.md](SOCKETIO.md) | Socket.IO itself — protocol, handshake, mounting, nginx, scaling |
 | [HOW-IT-WORKS.md](HOW-IT-WORKS.md) | the whole system, including the graph, the ledger and the stores |
