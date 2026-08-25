@@ -20,6 +20,11 @@ what the server actually does when the analyst clicks "New dossier", asks a
 question, reopens an old dossier or signs out, with the Socket.IO handlers shown
 in full — see **[docs/FRONTEND-SOCKETIO.md](docs/FRONTEND-SOCKETIO.md)**.
 
+The database has its own guide too:
+**[docs/DB-OPERATIONS.md](docs/DB-OPERATIONS.md)** covers the schema and every
+read and write the app makes — what each question stores, how history is read
+back, what cascades on a delete, and which statement each operation issues.
+
 ---
 
 ## Architecture
@@ -116,7 +121,8 @@ Corporate_Filing_Analyzer_Agent/
 ├── docs/
 │   ├── HOW-IT-WORKS.md         # Walkthrough of every flow, from sign-in to summarisation
 │   ├── SOCKETIO.md             # Socket.IO from zero to production: ideas, this app, deployment
-│   └── FRONTEND-SOCKETIO.md    # What the backend does for each workbench operation, handler by handler
+│   ├── FRONTEND-SOCKETIO.md    # What the backend does for each workbench operation, handler by handler
+│   └── DB-OPERATIONS.md        # The schema, and every database read and write the app makes
 ├── deploy/
 │   └── cnpg-cluster.yaml       # The same database as a CloudNativePG Cluster (Kubernetes)
 ├── backend/

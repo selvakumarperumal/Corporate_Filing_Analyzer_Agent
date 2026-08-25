@@ -8,7 +8,8 @@ This is the *architecture and behavior* document. Setup, configuration values, a
 reference live in the [README](../README.md); the real-time transport — how Socket.IO is mounted
 onto FastAPI and how events are streamed — is in [SOCKETIO.md](SOCKETIO.md), and what the backend
 does for each workbench operation, handler by handler, is in
-[FRONTEND-SOCKETIO.md](FRONTEND-SOCKETIO.md).
+[FRONTEND-SOCKETIO.md](FRONTEND-SOCKETIO.md); and the schema, with every
+statement the app issues against it, is in [DB-OPERATIONS.md](DB-OPERATIONS.md).
 
 ---
 

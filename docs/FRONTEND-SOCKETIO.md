@@ -65,13 +65,20 @@ The files that matter:
 | [17](#op-17--signing-out) | Signs out | `POST /api/auth/logout` + **`disconnect`** | yes |
 | [18](#op-18--a-second-tab-or-a-second-device) | Opens a second tab | a second **`connect`** | yes |
 
-**Part 3 — Reference**
-5. [Where each event is born](#5-where-each-event-is-born)
-6. [Why every event carries `session_id`](#6-why-every-event-carries-session_id)
-7. [Two database sessions per run, on purpose](#7-two-database-sessions-per-run-on-purpose)
-8. [Every way the backend refuses or fails](#8-every-way-the-backend-refuses-or-fails)
-9. [What the backend deliberately does not do](#9-what-the-backend-deliberately-does-not-do)
-10. [Reading the log](#10-reading-the-log)
+**Part 3 — Ids, sessions and the database**
+5. [Every dossier has two ids](#5-every-dossier-has-two-ids)
+6. [What `sid` has to do with the database](#6-what-sid-has-to-do-with-the-database)
+7. [Retrieving the conversation, on every query](#7-retrieving-the-conversation-on-every-query)
+8. [Retrieving history when you ask in an old dossier](#8-retrieving-history-when-you-ask-in-an-old-dossier)
+9. [Storing messages: what one query writes](#9-storing-messages-what-one-query-writes)
+
+**Part 4 — Reference**
+10. [Where each event is born](#10-where-each-event-is-born)
+11. [Why every event carries `session_id`](#11-why-every-event-carries-session_id)
+12. [Two database sessions per run, on purpose](#12-two-database-sessions-per-run-on-purpose)
+13. [Every way the backend refuses or fails](#13-every-way-the-backend-refuses-or-fails)
+14. [What the backend deliberately does not do](#14-what-the-backend-deliberately-does-not-do)
+15. [Reading the log](#15-reading-the-log)
 
 ---
 
@@ -381,7 +388,7 @@ sequenceDiagram
   alt no token at all
     H-->>B: ConnectionRefusedError "Not signed in."
   else token present
-    H->>DB: decode the JWT, load the user
+  H->>DB: decode the JWT, load the user
     alt expired, invalid, or the account is gone
       DB-->>H: AuthError
       H-->>B: ConnectionRefusedError with the reason
@@ -1078,7 +1085,7 @@ sequenceDiagram
 
   B->>H: handshake with whatever token is current now
   alt the token is still valid
-    H->>DB: verify + load the user
+  H->>DB: verify + load the user
     H->>H: save_session(new sid, user_id)
     H-->>B: connected
   else the token expired while the socket was away
@@ -1168,9 +1175,517 @@ finish. Nothing serialises them server-side.
 
 ---
 
-# Part 3 — Reference
+# Part 3 — Ids, sessions and the database
 
-## 5. Where each event is born
+Part 2 said *what* happens for each operation. This part answers the four
+questions underneath all of them: which ids exist, what a `sid` has to do with
+any of it, how a conversation and its history are read back out of Postgres, and
+what a single question writes.
+
+Full coverage of the schema and every statement the app issues is in
+[DB-OPERATIONS.md](DB-OPERATIONS.md); this part covers only what the Socket.IO
+layer itself touches.
+
+---
+
+## 5. Every dossier has two ids
+
+**Yes — every dossier has a unique id. In fact it has two, one minted on each
+side of the wire.**
+
+```python
+class Conversation(SQLModel, table=True):
+    __tablename__ = "conversations"
+    __table_args__ = (
+        # The pair is what is unique, not the client id alone.
+        UniqueConstraint("user_id", "client_id", name="uq_conversation_owner_client"),
+        Index("ix_conversation_owner_recent", "user_id", "last_message_at"),
+    )
+
+    id: str = Field(default_factory=_uuid, primary_key=True, max_length=32)
+    user_id: str = Field(foreign_key="users.id", index=True, ondelete="CASCADE", max_length=32)
+    client_id: str = Field(max_length=64)
+```
+
+| | `client_id` | `id` |
+| --- | --- | --- |
+| minted by | **the browser**, when the analyst clicks *New dossier* | **the backend**, when the row is first created |
+| the backend learns it | on the first `query` or upload carrying it | it generates it |
+| unique | **per account** — `UNIQUE (user_id, client_id)` | globally — it is the primary key |
+| used by | Socket.IO payloads, REST paths, the stamp on every event | `messages.conversation_id`, the summariser, everything internal |
+| ever sent to the browser | yes — it *is* the browser's own id | **no** |
+
+### Why the browser's id is not unique on its own
+
+Two analysts can independently mint the same id — unlikely with a UUID4, but
+nothing stops it, and nothing about a browser-generated value can be trusted.
+So **nothing is ever looked up by `client_id` alone**. Every query pairs it with
+the owner:
+
+```python
+result = await session.exec(
+    select(Conversation)
+    .where(Conversation.user_id == user_id)
+    .where(Conversation.client_id == client_id)
+)
+```
+
+The `user_id` in that query comes off the socket session, never off the payload
+— which is what makes a dossier id safe to let the browser choose.
+
+### The three jobs the dossier id does on a query
+
+```mermaid
+flowchart TD
+  P["query payload<br/>session_id = a91f3c…"] --> J1["1 · find or create the row<br/>find(user_id, client_id)"]
+  P --> J2["2 · name the vector collection<br/>scoped_session_id(user_id, session_id)<br/>→ '6f1c…:a91f3c…'"]
+  P --> J3["3 · stamp every outbound event<br/>payload['session_id'] = session_id"]
+  J1 --> DB["conversations row<br/>→ messages.conversation_id"]
+  J2 --> V["that dossier's own<br/>Chroma collection"]
+  J3 --> B["the browser can tell<br/>which dossier an event belongs to"]
+```
+
+Job 2 is the one that keeps filings apart:
+
+```python
+def scoped_session_id(user_id: str, session_id: str) -> str:
+    """Namespace a browser-supplied chat id under the account that owns it."""
+    return f"{user_id}:{session_id}"
+```
+
+Two accounts that somehow picked the same dossier id still get two different
+collections, and there is no id a signed-in user can send that resolves to
+someone else's uploads.
+
+Job 3 is one line in the forwarding loop, and the reason a client can tell a
+late answer from a current one — see
+[§11](#11-why-every-event-carries-session_id).
+
+### One id, four entry points
+
+The same `client_id` addresses the dossier everywhere:
+
+| Where | How it arrives |
+| --- | --- |
+| `query` event | `data["session_id"]` |
+| `POST /api/upload` | a form field, `session_id` |
+| `GET /api/conversations/{id}/messages` | the path segment |
+| `DELETE /api/conversations/{id}` | the path segment |
+
+All four resolve it the same way — `(user_id from the credential, client_id from
+the request)` — so a filing uploaded over HTTP and a question asked over the
+socket land on the same row and the same collection.
+
+---
+
+## 6. What `sid` has to do with the database
+
+**Nothing is stored under a `sid`. It never appears in a query, a column or a
+row.**
+
+A `sid` is python-socketio's handle for one open connection. It exists in
+process memory, it changes on every reconnect, and it is thrown away when the
+connection closes. What makes it useful is the one thing saved against it at
+handshake — a `user_id`, which *is* a database key.
+
+```mermaid
+flowchart LR
+  S["sid — in memory only<br/>one open connection<br/>new on every reconnect"] -->|"save_session at handshake"| U["user_id"]
+  U -->|"users.id (PK)"| T1["users"]
+  U -->|"conversations.user_id (FK)"| T2["conversations"]
+  T2 -->|"messages.conversation_id (FK)"| T3["messages"]
+  X["never written to Postgres:<br/>the sid itself"]
+```
+
+| | `sid` | `user_id` | `client_id` |
+| --- | --- | --- | --- |
+| lives in | process memory | Postgres | Postgres |
+| lifetime | one connection | the account | the dossier |
+| survives a reconnect | **no** | yes | yes |
+| appears in a SQL query | **never** | constantly | always paired with `user_id` |
+
+The only database read the handshake itself performs is the user lookup:
+
+```python
+claims = decode_token(token, "access")          # no database involved
+user = await session.get(User, str(claims["sub"]))   # one primary-key read
+if user is None or not user.is_active:
+    raise AuthError("This account is no longer active.")
+```
+
+Then the result is pinned to the connection, in memory:
+
+```python
+await sio.save_session(sid, {"user_id": user.id, "email": user.email})
+```
+
+### What follows from that
+
+- **A run is attributed to the account, not to the connection.** Two tabs, a
+  reconnect halfway through, a laptop that slept — all irrelevant to what gets
+  written, because every write is keyed by `user_id` and `conversation_id`.
+- **Nothing in the schema records which socket asked a question.** If you ever
+  needed per-connection auditing, the place for it is `messages.meta`, which is
+  `jsonb` and already carries the `run_id`.
+- **A `sid` cannot be used to find anything.** There is no "sessions" table, no
+  presence tracking, and nothing to clean up when a connection closes — which
+  is why the `disconnect` handler is one line.
+
+---
+
+## 7. Retrieving the conversation, on every query
+
+Every `query` — first question or thousandth — begins by resolving the dossier
+row. There is no cache in front of this and no "current conversation" held
+anywhere: it is looked up fresh each time, from the id in the payload and the
+user id on the socket.
+
+```python
+async def open_conversation(
+    self, session: AsyncSession, user_id: str, client_id: str, title: str = ""
+) -> Conversation:
+    conversation = await self.find(session, user_id, client_id)
+    if conversation is not None:
+        return conversation
+
+    conversation = Conversation(
+        user_id=user_id, client_id=client_id, title=title.strip()[:200]
+    )
+    session.add(conversation)
+    try:
+        await session.commit()
+    except Exception:
+        # Two questions raced into the same new dossier and the unique
+        # constraint caught the second. The row the winner wrote is the one
+        # both should use.
+        await session.rollback()
+        existing = await self.find(session, user_id, client_id)
+        if existing is None:
+            raise
+        return existing
+
+    await session.refresh(conversation)
+    logger.info("Opened conversation %s (user=%s)", conversation.id, user_id)
+    return conversation
+```
+
+```mermaid
+flowchart TD
+  Q["query arrives with session_id"] --> F["SELECT * FROM conversations<br/>WHERE user_id = ? AND client_id = ?"]
+  F -->|"a row"| R["use it — an existing dossier<br/>(old or new, the code cannot tell)"]
+  F -->|"no row"| I["INSERT a conversation row"]
+  I -->|"committed"| N["a brand-new dossier<br/>logged as 'Opened conversation …'"]
+  I -->|"unique violation — a race"| RB["ROLLBACK, then SELECT again<br/>use the row the winner wrote"]
+```
+
+Three things this guarantees:
+
+1. **Scoping is not optional.** The lookup is by `(user_id, client_id)`, so a
+   dossier id from one account can never resolve to another's conversation.
+2. **A new dossier costs one INSERT, and only when it is first used.** See
+   [Op 6](#op-6--clicking-new-dossier).
+3. **Concurrent first questions cannot create two rows.** The unique constraint
+   decides it, not a prior `SELECT` and not a lock.
+
+Immediately after, the handler prefers the **stored** title:
+
+```python
+# The stored name wins over the one the browser sent: the server named
+# this dossier, and a client that has fallen behind should not be able
+# to have it renamed.
+title = conversation.title or title
+```
+
+---
+
+## 8. Retrieving history when you ask in an old dossier
+
+This is the operation people mean when they say "does it remember?". The answer
+is assembled in `context_for`, called **before the question is recorded** and
+before the graph starts.
+
+> Reopening a dossier in the browser does not load history for the model. That
+> is the *display* history, a separate paged read
+> ([Op 10](#op-10--opening-an-old-dossier)). The model's history is built fresh
+> on every question, whether or not the analyst ever scrolled back.
+
+### The funnel
+
+```mermaid
+flowchart TD
+  A["the dossier's hot tail<br/>Redis if warm, else<br/>SELECT … ORDER BY seq DESC LIMIT 40"] --> B["drop everything already folded<br/>seq ≤ summary_through_seq"]
+  B --> C["drop failed runs<br/>status = 'error', and the question they answered"]
+  C --> D["keep the last HISTORY_CONTEXT_MESSAGES<br/>default 10"]
+  D --> E["trim to HISTORY_CONTEXT_TOKENS<br/>default 1500, minus the summary's own tokens<br/>oldest dropped first"]
+  E --> F["ContextHistory<br/>summary + messages + tokens"]
+  F --> G["graph_input:<br/>query, session_id, title, summary, history"]
+```
+
+### Where the tail comes from
+
+```python
+async def _recent(self, session, conversation) -> list[dict]:
+    """The conversation's hot tail, from the cache if it is there."""
+    cached = await self.cache.recent(conversation.id)
+    if cached is not None:
+        return cached
+
+    window = max(self.context_messages, settings.REDIS_HOT_WINDOW)
+    result = await session.exec(
+        select(Message)
+        .where(Message.conversation_id == conversation.id)
+        .order_by(col(Message.seq).desc())
+        .limit(window)
+    )
+    tail = [_cacheable(m) for m in reversed(result.all())]
+    await self.cache.prime(conversation.id, tail)
+    return tail
+```
+
+- **Ordered by `seq`, not `created_at`.** Two messages written in the same
+  millisecond would otherwise order by coin toss, and pagination needs a total
+  order.
+- **Read newest-first with a `LIMIT`, then reversed in Python** — so an old
+  dossier with two thousand messages still reads forty rows.
+- **Redis is optional and fail-soft.** Key `cfa:conv:<conversation_id>:tail`,
+  the last 40 messages, one hour TTL touched on each read. Lose it, flush it, or
+  never configure it, and the only difference is that the read goes to Postgres.
+
+### The filters, and why each exists
+
+```python
+fresh = [
+    m for m in tail
+    if m["seq"] > conversation.summary_through_seq
+    # A failed run is kept in the ledger so the analyst can see it, but
+    # conditioning the next answer on an error message would only
+    # teach the model to apologise.
+    and m.get("status", STATUS_OK) == STATUS_OK
+]
+# A question whose run failed is dropped along with the failure: on its
+# own it reads as something the analyzer was asked and declined to
+# answer, which is not what happened and not worth conditioning on.
+answered = [
+    message
+    for index, message in enumerate(fresh)
+    if message["role"] != ROLE_USER
+    or (index + 1 < len(fresh) and fresh[index + 1]["role"] == ROLE_ASSISTANT)
+]
+
+window = answered[-self.context_messages :]
+
+# Newest first while trimming, so what is dropped is always the oldest.
+budget = self.context_tokens - estimate_tokens(conversation.summary)
+```
+
+| Filter | Removes | Because |
+| --- | --- | --- |
+| `seq > summary_through_seq` | anything already compressed | it is in the summary — sending both wastes the budget |
+| `status == "complete"` | failed answers | an error message teaches the model to apologise |
+| the pairing pass | a question whose answer failed | alone it reads as a question the analyzer refused |
+| `[-context_messages:]` | all but the last 10 messages | a prompt is a fixed size, a dossier is not |
+| the token budget | the oldest of what remains | the summary's own tokens come out of the same 1500 |
+
+### What the run is handed
+
+```python
+graph_input = {
+    "query": query,
+    "session_id": session_id,     # already scoped: "<user_id>:<client_id>"
+    "title": title,
+    "summary": history.summary,
+    "history": history.messages,
+}
+```
+
+and the log line naming exactly how much context it got:
+
+```
+Run 7c44… started: 'How did that compare…' (session=6f1c…:a91f3c…, history=8 msg/~1180 tokens)
+```
+
+So a follow-up in a three-hundred-message dossier is answered from **a rolling
+summary plus about eight recent messages** — never from three hundred.
+
+### The rolling summary that keeps it bounded
+
+The summary is written by a background task scheduled *after* the answer is
+delivered, so nothing waits on it:
+
+```python
+result = await session.exec(
+    select(Message)
+    .where(Message.conversation_id == conversation_id)
+    .where(col(Message.seq) > conversation.summary_through_seq)
+    .order_by(col(Message.seq))
+)
+pending = list(result.all())
+if len(pending) <= self.summary_threshold:      # default 24
+    return
+
+# The recent turns stay verbatim — they are what the next
+# question is most likely to be about.
+fold = pending[: -self.context_messages] or pending
+summary = (await self.summarizer(conversation.summary, _transcript(fold))).strip()
+...
+conversation.summary = summary
+conversation.summary_through_seq = fold[-1].seq
+conversation.summary_tokens = estimate_tokens(summary)
+```
+
+Three columns on `conversations` hold it: `summary`, `summary_through_seq`, and
+`summary_tokens`. The first filter in the funnel is what reads
+`summary_through_seq` back.
+
+---
+
+## 9. Storing messages: what one query writes
+
+**Every question writes exactly two message rows** — the question before the
+graph runs, the answer after the stream ends — in **two separate database
+sessions**, with the whole run in between
+([§12](#12-two-database-sessions-per-run-on-purpose)).
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant H as query handler
+  participant DB as Postgres
+  participant R as Redis (optional)
+
+  Note over H,DB: session 1 — before the graph
+  H->>DB: SELECT the conversation by (user_id, client_id)
+  H->>DB: INSERT it if this is the dossier's first use
+  H->>DB: SELECT the tail for context_for
+  H->>DB: SELECT count(*) user messages → meta.run
+  H->>DB: SELECT max(seq) → the next position
+  H->>DB: INSERT the question row + UPDATE the conversation counters
+  H->>R: append the question to the cached tail
+
+  Note over H: the graph runs — no connection held
+
+  Note over H,DB: session 2 — after the stream
+  H->>DB: SELECT the conversation by primary key
+  H->>DB: UPDATE the title, if the router named it this run
+  H->>DB: SELECT count(*) is skipped — assistant rows carry no run number
+  H->>DB: SELECT max(seq) → the next position
+  H->>DB: INSERT the answer row + UPDATE the conversation counters
+  H->>R: append the answer to the cached tail
+```
+
+### The write itself
+
+```python
+async def record_message(
+    self, session, conversation, role, content, status=STATUS_OK, meta=None
+) -> Message:
+    """Append one message to the ledger, and to the cached tail.
+
+    Written in the same transaction as the conversation's counters, so the
+    row count and ``message_count`` cannot disagree.
+    """
+    meta = dict(meta or {})
+    if role == ROLE_USER and "run" not in meta:
+        # The ledger numbers runs, not messages, and a client that has
+        # paged back into an old dossier has no way to work out where in
+        # the count it is standing. Stamped once, at write time.
+        meta["run"] = await self._run_number(session, conversation.id)
+
+    next_seq = await self._next_seq(session, conversation.id)
+    message = Message(
+        conversation_id=conversation.id,
+        seq=next_seq,
+        role=role,
+        content=content,
+        tokens=estimate_tokens(content),
+        status=status,
+        meta=meta,
+    )
+    conversation.message_count = next_seq
+    conversation.last_message_at = message.created_at
+
+    session.add(message)
+    session.add(conversation)
+    await session.commit()
+    await session.refresh(message)
+
+    await self.cache.append(conversation.id, _cacheable(message))
+    return message
+```
+
+### What each column gets
+
+| Column | The question row | The answer row |
+| --- | --- | --- |
+| `conversation_id` | the resolved conversation's **`id`** (not the client id) | same |
+| `seq` | `max(seq) + 1`, read from the messages themselves | the next one after it |
+| `role` | `"user"` | `"assistant"` |
+| `content` | the question — or `FALLBACK_QUERY` if a filing was attached with none | the joined `token` stream, or the failure text |
+| `tokens` | estimated at write time, and later spent by the context budget | same |
+| `status` | `"complete"` | `"complete"`, or `"error"` if the run failed |
+| `meta` | `{"files": [...]}` when filings were attached | `{"category", "run_id"}`, plus `"error"` on a failure |
+| `meta.run` | the run number: `COUNT(user messages) + 1` | not set — runs are numbered by their question |
+
+Two counters on the conversation move in the **same transaction** as the insert:
+`message_count = seq` and `last_message_at`, the latter being what the dock's
+"most recent first" ordering reads.
+
+### Why `seq` is read from the messages, not the counter
+
+```python
+async def _next_seq(self, session, conversation_id: str) -> int:
+    """The next free position in a conversation.
+
+    Read from the messages themselves rather than the conversation's
+    counter, so a counter that has drifted cannot hand out a position that
+    is already taken.
+    """
+```
+
+And `UNIQUE (conversation_id, seq)` is the backstop: if two writers ever did
+claim the same position, the second one fails rather than corrupting the order
+that pagination depends on.
+
+### The answer write, including the failure case
+
+```python
+content = answer.strip() or failure or "No answer came back for this question."
+await history_service.record_message(
+    db, conversation, ROLE_ASSISTANT, content,
+    status=STATUS_ERROR if failure else STATUS_OK,
+    meta={... "category", "run_id", "error" ...},
+)
+```
+
+| Outcome | Question row | Answer row |
+| --- | --- | --- |
+| normal run | written | written, `status="complete"` |
+| run failed mid-stream | written | written, `status="error"`, `meta.error` set |
+| nothing streamed | written | written, "No answer came back for this question." |
+| ledger could not be opened | **not written** | not written — the graph never ran |
+| dossier deleted mid-run | written, then cascaded away | not written — `_record_answer` returns quietly |
+
+A failed run is deliberately kept: the analyst should see on their next visit
+that the question was asked and did not land. The context funnel in
+[§8](#8-retrieving-history-when-you-ask-in-an-old-dossier) then filters it back
+out, so it is a record without being an influence.
+
+### Later, and off the critical path
+
+```python
+history_service.schedule_summary(conversation_pk)
+```
+
+One more possible write per run, in its own session, and only once a dossier has
+more than `HISTORY_SUMMARY_THRESHOLD` (24) unfolded messages: an `UPDATE` of the
+three summary columns. It never blocks an answer, and failing it costs nothing
+but a longer tail next time.
+
+---
+
+# Part 4 — Reference
+
+## 10. Where each event is born
 
 Events are produced at three different depths and all leave through one loop:
 
@@ -1212,7 +1727,7 @@ script or a different transport.
 
 ---
 
-## 6. Why every event carries `session_id`
+## 11. Why every event carries `session_id`
 
 One line in the forwarding loop:
 
@@ -1233,7 +1748,7 @@ Three reasons, all on the server's side of the argument:
 
 ---
 
-## 7. Two database sessions per run, on purpose
+## 12. Two database sessions per run, on purpose
 
 A run touches the database twice, in two separate short-lived sessions, with the
 whole graph run in between them:
@@ -1254,7 +1769,7 @@ pool.
 
 ---
 
-## 8. Every way the backend refuses or fails
+## 13. Every way the backend refuses or fails
 
 | Situation | Where | What the backend does | What reaches the browser |
 | --- | --- | --- | --- |
@@ -1276,7 +1791,7 @@ the analyst has read the answer, a bookkeeping failure is not theirs to act on.
 
 ---
 
-## 9. What the backend deliberately does not do
+## 14. What the backend deliberately does not do
 
 | Not implemented | Why |
 | --- | --- |
@@ -1291,7 +1806,7 @@ the analyst has read the answer, a bookkeeping failure is not theirs to act on.
 
 ---
 
-## 10. Reading the log
+## 15. Reading the log
 
 The Socket.IO layer narrates itself. One complete question, from sign-in to
 recorded answer, looks like this:
