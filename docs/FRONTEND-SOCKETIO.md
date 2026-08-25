@@ -1,1307 +1,1328 @@
-# The frontend, wired to the backend
+# Socket.IO on the backend, operation by operation
 
-How the browser half of the Corporate Filing Analyzer talks to the FastAPI +
-LangGraph backend: the Socket.IO connection it opens, the one event it sends,
-the seven it listens for, and — operation by operation — exactly what the
-workbench does on the client for each.
+The workbench gives an analyst about eighteen distinct things to do — sign in,
+open a dossier, attach a filing, ask a question, page back through history,
+discard a dossier, sign out.
 
-This is the **client's** side of the wire. Its counterparts:
+**Only one of them sends anything over Socket.IO: asking a question.** Two more
+open and close the connection. Everything else is a plain HTTP route — or never
+reaches the backend at all.
 
-| Document | What it covers |
+This document walks through every one of those operations and answers the same
+three questions each time:
+
+1. Does this reach the Socket.IO layer at all?
+2. If yes — which handler runs, and what does it do, line by line?
+3. If no — what happens instead, and why was the socket left out of it?
+
+Every code block here is **backend Python**. Nothing in this document is
+frontend code.
+
+| Where to look | For |
 | --- | --- |
-| [SOCKETIO.md](SOCKETIO.md) | Socket.IO itself — the protocol, the handshake, the server mount, deployment |
-| [HOW-IT-WORKS.md](HOW-IT-WORKS.md) | The whole system end to end, including the graph, the ledger and the stores |
-| **this file** | What the browser does, in `app.js` / `auth.js`, for every operation |
+| this file | what the backend does for each thing the analyst does |
+| [SOCKETIO.md](SOCKETIO.md) | Socket.IO itself — protocol, handshake, mounting, nginx, scaling |
+| [HOW-IT-WORKS.md](HOW-IT-WORKS.md) | the whole system, including the graph, the ledger and the stores |
 
-Everything below refers to four files:
+The files that matter:
 
-- [`frontend/index.html`](../frontend/index.html) — the markup and the script order
-- [`frontend/config.js`](../frontend/config.js) — where the backend is
-- [`frontend/auth.js`](../frontend/auth.js) — tokens, the gate, `authFetch`
-- [`frontend/app.js`](../frontend/app.js) — the socket, the ledger, the dossiers
+- [`api/socket.py`](../backend/Analyzer/api/socket.py) — **the entire Socket.IO surface**, three handlers
+- [`main.py`](../backend/Analyzer/main.py) — where the socket server is mounted next to FastAPI
+- [`analysis/pipeline.py`](../backend/Analyzer/analysis/pipeline.py) — turns a graph run into a stream of events
+- [`analysis/graph/nodes.py`](../backend/Analyzer/analysis/graph/nodes.py) — where most events are born
+- [`conversations/service.py`](../backend/Analyzer/conversations/service.py) — the ledger a run is written into
 
 ---
 
 ## Contents
 
-**The setup**
-1. [The picture in one diagram](#1-the-picture-in-one-diagram)
-2. [The files, and the order they load in](#2-the-files-and-the-order-they-load-in)
-3. [Finding the backend: `BACKEND_URL`](#3-finding-the-backend-backend_url)
-4. [The socket object, option by option](#4-the-socket-object-option-by-option)
-5. [The lifecycle, as a state machine](#5-the-lifecycle-as-a-state-machine)
+**Part 1 — The layer itself**
+1. [Two doors into one process](#1-two-doors-into-one-process)
+2. [The whole Socket.IO surface: three handlers](#2-the-whole-socketio-surface-three-handlers)
+3. [What the backend remembers about a connection](#3-what-the-backend-remembers-about-a-connection)
+4. [The seven events the server sends](#4-the-seven-events-the-server-sends)
 
-**Every operation**
-- [Op 1 — Cold page load](#op-1--cold-page-load)
-- [Op 2 — Signing in or signing up](#op-2--signing-in-or-signing-up)
-- [Op 3 — Opening the connection](#op-3--opening-the-connection)
-- [Op 4 — A refused handshake](#op-4--a-refused-handshake)
-- [Op 5 — Restoring the dock](#op-5--restoring-the-dock)
-- [Op 6 — Opening a stored dossier](#op-6--opening-a-stored-dossier)
-- [Op 7 — Opening a new dossier](#op-7--opening-a-new-dossier)
-- [Op 8 — Attaching a filing](#op-8--attaching-a-filing)
-- [Op 9 — Asking a question](#op-9--asking-a-question)
-- [Op 10 — Every inbound event](#op-10--every-inbound-event)
-- [Op 11 — `liveTurn`, the staleness guard](#op-11--liveturn-the-staleness-guard)
-- [Op 12 — Losing the connection mid-run](#op-12--losing-the-connection-mid-run)
-- [Op 13 — Reconnecting](#op-13--reconnecting)
-- [Op 14 — Discarding a dossier](#op-14--discarding-a-dossier)
-- [Op 15 — Signing out](#op-15--signing-out)
-- [Op 16 — The token lifecycle underneath](#op-16--the-token-lifecycle-underneath)
+**Part 2 — Every operation**
 
-**Reference**
-6. [The event contract](#6-the-event-contract)
-7. [Client state shapes](#7-client-state-shapes)
-8. [The busy lock](#8-the-busy-lock)
-9. [Failure matrix](#9-failure-matrix)
-10. [Adding a new event](#10-adding-a-new-event)
-11. [Debugging from the browser](#11-debugging-from-the-browser)
+| # | What the analyst does | Reaches the backend as | Socket.IO? |
+| --- | --- | --- | --- |
+| [1](#op-1--opening-the-page) | Opens the page | nothing | no |
+| [2](#op-2--signing-up-or-signing-in) | Signs up / signs in | `POST /api/auth/signup` · `login` | no |
+| [3](#op-3--a-returning-analyst-restoring-a-session) | Returns to a tab (session restore) | `POST /api/auth/refresh` | no |
+| [4](#op-4--the-workbench-opens-the-handshake) | Workbench opens | **`connect`** | **yes** |
+| [5](#op-5--filling-the-dock) | Dock fills with dossiers | `GET /api/conversations` | no |
+| [6](#op-6--clicking-new-dossier) | Clicks **New dossier** | **nothing at all** | **no** |
+| [7](#op-7--attaching-a-filing) | Attaches a filing | `POST /api/upload` | no |
+| [8](#op-8--asking-the-first-question-in-a-dossier) | Asks the **first** question | **`query`** | **yes** |
+| [9](#op-9--asking-a-follow-up-in-the-same-dossier) | Asks a follow-up | **`query`** | yes |
+| [10](#op-10--opening-an-old-dossier) | Opens an **old dossier** | `GET /api/conversations/{id}/messages` | no |
+| [11](#op-11--loading-earlier-runs) | Loads earlier runs | same, with a cursor | no |
+| [12](#op-12--asking-a-question-in-an-old-dossier) | Asks a question in an old dossier | **`query`** | yes |
+| [13](#op-13--switching-dossier-while-a-run-is-streaming) | Switches dossier mid-run | nothing | no |
+| [14](#op-14--discarding-a-dossier) | Discards a dossier | `DELETE /api/conversations/{id}` | no |
+| [15](#op-15--the-connection-drops-mid-run) | Loses the connection | **`disconnect`** | **yes** |
+| [16](#op-16--reconnecting) | Reconnects | **`connect`** again | **yes** |
+| [17](#op-17--signing-out) | Signs out | `POST /api/auth/logout` + **`disconnect`** | yes |
+| [18](#op-18--a-second-tab-or-a-second-device) | Opens a second tab | a second **`connect`** | yes |
+
+**Part 3 — Reference**
+5. [Where each event is born](#5-where-each-event-is-born)
+6. [Why every event carries `session_id`](#6-why-every-event-carries-session_id)
+7. [Two database sessions per run, on purpose](#7-two-database-sessions-per-run-on-purpose)
+8. [Every way the backend refuses or fails](#8-every-way-the-backend-refuses-or-fails)
+9. [What the backend deliberately does not do](#9-what-the-backend-deliberately-does-not-do)
+10. [Reading the log](#10-reading-the-log)
 
 ---
 
-## 1. The picture in one diagram
+# Part 1 — The layer itself
 
-The workbench speaks to the backend over **two channels**, and which one it
-uses is decided by one question: *does the response arrive all at once, or a
-piece at a time?*
+## 1. Two doors into one process
 
-- **REST (`fetch`)** — auth, uploads, listing and paging the ledger, deleting.
-  One request, one response. Always through `Auth.authFetch`, which attaches
-  the access token and retries once on a 401.
-- **Socket.IO** — asking a question. One `query` goes out, and the answer comes
-  back as a stream of small events over a connection that stays open.
+One Python process serves both protocols. `socketio.ASGIApp` wraps the FastAPI
+app: anything addressed to `/socket.io/` is handled by the Socket.IO server,
+and everything else falls through to FastAPI.
+
+From [`main.py`](../backend/Analyzer/main.py):
+
+```python
+sio = socketio.AsyncServer(
+    async_mode="asgi",
+    cors_allowed_origins=settings.CORS_ORIGINS if settings.CORS_ORIGINS != ["*"] else "*",
+)
+register_handlers(sio, analysis_pipeline, auth_service)
+
+# Entry point: `uvicorn main:asgi_app`
+asgi_app = socketio.ASGIApp(sio, other_asgi_app=app)
+```
 
 ```mermaid
 flowchart LR
-  subgraph browser["Browser — the workbench"]
-    gate["auth.js<br/>gate + token lifecycle"]
-    app["app.js<br/>dossiers, ledger, runs"]
-    sock["socket.io client<br/>autoConnect: false"]
-  end
-
-  subgraph server["Backend"]
-    rest["FastAPI<br/>/api/*"]
-    sio["Socket.IO server<br/>/socket.io/"]
-    lg["LangGraph<br/>retrieve → route → analyze"]
-  end
-
-  gate -- "POST /api/auth/signup · login · refresh · logout" --> rest
-  app  -- "authFetch: /api/upload, /api/conversations*" --> rest
-  app  -- "socket.connect + emit 'query'" --> sock
-  sock -- "handshake auth: {token}" --> sio
-  sio  -- "run_started · status · route · title · token · done · error" --> sock
-  sio  --> lg
-  lg -. "streamed events" .-> sio
-  gate -. "auth:signedin / auth:signedout" .-> app
+  req["incoming request"] --> mount{"path starts with<br/>/socket.io/ ?"}
+  mount -- yes --> sio["Socket.IO server<br/>connect · disconnect · query"]
+  mount -- no --> api["FastAPI<br/>/api/auth/* · /api/upload<br/>/api/conversations* · /api/health"]
+  sio --> pipe["AnalysisPipeline<br/>the compiled graph"]
+  api --> pipe
+  sio --> led["conversations service<br/>the ledger"]
+  api --> led
 ```
 
-The two files never call each other. `auth.js` announces `auth:signedin` and
-`auth:signedout` as window events; `app.js` listens
-([`app.js:1162`](../frontend/app.js#L1162)). That is the entire seam between
-them, which is why either can be read on its own.
+Both doors reach the **same singletons**, built once in
+[`container.py`](../backend/Analyzer/container.py): one chat model, one vector
+store, one compiled graph, one history service. A filing ingested over HTTP is
+immediately searchable by a question asked over the socket, because they are
+talking to the same object in the same process.
+
+> The one-line trap: the process must be started as `uvicorn main:asgi_app`.
+> Starting `main:app` serves the REST API perfectly and drops every websocket.
 
 ---
 
-## 2. The files, and the order they load in
+## 2. The whole Socket.IO surface: three handlers
 
-Scripts are plain `<script>` tags at the bottom of
-[`index.html`](../frontend/index.html) — no bundler, no modules, no `defer`.
-They therefore execute strictly in order:
+[`api/socket.py`](../backend/Analyzer/api/socket.py) registers three handlers
+and nothing else. That is the complete real-time API.
+
+| Handler | Fires when | What it does |
+| --- | --- | --- |
+| `connect` | a browser opens the connection | verifies the access token, or refuses the connection outright |
+| `query` | the analyst asks a question | runs the graph, streams the answer back, writes both to the ledger |
+| `disconnect` | the connection closes | logs it — there is nothing to clean up |
 
 ```mermaid
 flowchart TD
-  A["socket.io.min.js<br/>defines io()"] --> B["marked.min.js<br/>defines marked"]
-  B --> C["config.js<br/>may set window.__BACKEND_URL__"]
-  C --> D["auth.js<br/>defines Auth, wires the gate,<br/>calls Auth.boot()"]
-  D --> E["app.js<br/>builds the socket, wires the UI,<br/>opens an empty dossier"]
+  subgraph handlers["api/socket.py — the entire real-time API"]
+    C["connect(sid, environ, auth_data)<br/>admit or refuse"]
+    Q["query(sid, data)<br/>the only event the client can send"]
+    D["disconnect(sid)<br/>log and forget"]
+  end
+  C --> S["socket session<br/>sid → user_id, email"]
+  Q --> S
+  Q --> L["ledger — Postgres"]
+  Q --> G["graph — retrieve, route, analyze"]
+  G --> E["emitted events<br/>run_started, status, title,<br/>route, token, done, error"]
 ```
 
-| File | Owns | Must load before |
-| --- | --- | --- |
-| `socket.io.min.js` | the `io()` factory | `app.js` |
-| `marked.min.js` | markdown → HTML for streamed answers | `app.js` |
-| `config.js` | `window.__BACKEND_URL__` | `auth.js`, `app.js` |
-| `auth.js` | `window.Auth`, the sign-in gate, the refresh timer | `app.js` |
-| `app.js` | the socket, dossiers, runs, the ledger | — |
-
-### The ordering subtlety worth knowing
-
-`auth.js` ends by calling `Auth.boot()`
-([`auth.js:233`](../frontend/auth.js#L233)). `boot` is `async`, but the body of
-an async function runs synchronously up to its first `await`. So on a **cold
-start with no stored session**, `announceOut()` fires *while `auth.js` is still
-executing* — before `app.js` has been parsed, and therefore before its
-`auth:signedout` listener exists.
-
-That is harmless, and deliberately so:
-
-- The gate's own listener is registered earlier in `auth.js`, so the gate goes up.
-- `app.js` would have run `endSession()`, which leaves exactly the state its
-  own init already produces: no socket (`autoConnect: false`), one empty
-  dossier, cleared stage.
-
-When there *is* a stored refresh token, `boot` awaits the refresh call, so the
-`auth:signedin` event lands a network round trip later — long after `app.js`
-has loaded and is listening.
+**There is no fourth handler.** The client cannot upload over the socket,
+cannot ask for history over it, cannot cancel a run over it, and cannot
+subscribe to a dossier over it. Everything except asking a question is a plain
+HTTP route — which is what makes most of the operations below say "the socket
+does nothing".
 
 ---
 
-## 3. Finding the backend: `BACKEND_URL`
+## 3. What the backend remembers about a connection
 
-Both `auth.js` and `app.js` resolve the backend origin independently, with the
-same three-branch rule. They duplicate it on purpose: `auth.js` loads first and
-must not depend on `app.js` having run.
+Exactly two fields, saved once at handshake:
+
+```python
+await sio.save_session(sid, {"user_id": user.id, "email": user.email})
+```
+
+and read back at the top of every query:
+
+```python
+socket_session = await sio.get_session(sid)
+user_id = socket_session.get("user_id") if socket_session else None
+```
 
 ```mermaid
-flowchart TD
-  Q{"typeof window.__BACKEND_URL__ === 'string'?"}
-  Q -- "yes, non-empty" --> ABS["use it verbatim<br/>e.g. https://analyzer.example.com"]
-  Q -- "yes, empty string" --> ORIGIN["window.location.origin<br/>— the Docker case, nginx proxies /api and /socket.io"]
-  Q -- "no (config.js left unset)" --> P{"page served on port 8000?"}
-  P -- yes --> ORIGIN2["window.location.origin"]
-  P -- no --> LOCAL["http://localhost:8000<br/>— backend started by hand"]
+flowchart LR
+  subgraph conn["one connection = one sid"]
+    A["user_id"]
+    B["email"]
+  end
+  X["NOT stored:<br/>the open dossier · the filings · a run registry<br/>rooms · subscriptions · anything cancellable"]
 ```
 
-| Deployment | `config.js` | `BACKEND_URL` becomes | CORS? |
-| --- | --- | --- | --- |
-| Dev, page on a static server | unset | `http://localhost:8000` | cross-origin — handled by `CORSMiddleware` and `cors_allowed_origins` |
-| Dev, page served by uvicorn | unset | same origin | none |
-| Docker | `config.docker.js` sets `""` | same origin | none — [`nginx.conf`](../frontend/nginx.conf) proxies `/api/` and `/socket.io/` |
+This is the single most useful thing to understand about the design:
 
-The Socket.IO client appends its own `/socket.io/` path to whatever
-`BACKEND_URL` resolves to, which is why the nginx `location /socket.io/` block
-(with `Upgrade`/`Connection` headers and `proxy_buffering off`) is what keeps
-the transport on a real websocket instead of silently degrading to polling.
+- **Identity lives on the connection.** It is established once, at handshake,
+  and the browser can never change it or send it.
+- **The dossier lives in the payload.** It arrives with each `query`, and the
+  connection has no memory of it afterwards.
+
+Which is why switching dossiers, opening a new one, or paging through an old
+one needs no socket traffic whatsoever: the connection never knew which dossier
+the analyst was looking at in the first place.
 
 ---
 
-## 4. The socket object, option by option
+## 4. The seven events the server sends
 
-[`app.js:126`](../frontend/app.js#L126):
+All seven are emitted from one loop inside the `query` handler:
 
-```js
-const socket = io(BACKEND_URL, {
-  transports: ["websocket", "polling"],
-  reconnectionAttempts: 20,
-  reconnectionDelay: 1500,
-  autoConnect: false,
-  auth: (cb) => cb({ token: Auth.accessToken }),
-});
+```python
+async for event in analysis.query_stream(
+    question,
+    session_id=scoped_session_id(user_id, session_id),
+    title=title,
+    history=history,
+):
+    payload = dict(event)
+    event_name = payload.pop("event")
+    payload["session_id"] = session_id      # the client's own id, always
+
+    if event_name == "token":
+        answer.append(payload.get("content", ""))
+    elif event_name == "run_started":
+        run_id = payload.get("run_id", "")
+    elif event_name in {"route", "done"}:
+        category = payload.get("category") or category
+        title = payload.get("title") or title
+
+    await sio.emit(event_name, payload, to=sid)
 ```
 
-| Option | Value | Why |
+| Event | Payload | Sent when |
 | --- | --- | --- |
-| `transports` | websocket first, polling second | A streamed answer over long-polling arrives in stutters. Polling stays as the fallback for proxies that will not upgrade. |
-| `reconnectionAttempts` | `20` | With a 1.5 s base delay, backoff and the client's 5 s ceiling, about a minute and a half of trying before it gives up and the analyst must reload. |
-| `reconnectionDelay` | `1500` | Base delay; the client backs off from there. |
-| `autoConnect` | `false` | **The important one.** The backend refuses a handshake without a valid access token, so there is nothing to connect for until sign-in. `startSession()` calls `socket.connect()`. |
-| `auth` | a **callback**, not an object | The callback is invoked on *every* attempt, including reconnections. A socket that drops and comes back an hour later hands over the token current at that moment — not the expired one it first opened with. |
+| `run_started` | `run_id` | immediately, before any work |
+| `status` | `stage` = `retrieve` \| `route` \| `analyze`, plus `category` on analyze | as each graph node begins |
+| `title` | `title` | only when the dossier had no name yet |
+| `route` | `category` | once the router has classified the question |
+| `token` | `content` | for every fragment the model produces |
+| `done` | `run_id`, `category`, `title` | after the graph finishes |
+| `error` | `message` | instead of, or after, the above when something fails |
 
-That last row is the difference between a session that survives a laptop lid
-and one that does not. `auth: { token: Auth.accessToken }` would freeze the
-token at page load.
+Two details in that loop worth naming:
 
----
-
-## 5. The lifecycle, as a state machine
-
-```mermaid
-stateDiagram-v2
-  [*] --> Gated: page load, no stored session
-
-  Gated --> Restoring: stored refresh token found
-  Restoring --> Gated: refresh rejected
-  Restoring --> Connecting: auth:signedin
-
-  Gated --> Connecting: sign in / sign up succeeds
-
-  Connecting --> Connected: handshake accepted
-  Connecting --> Refreshing: connect_error mentions token/session
-  Connecting --> Retrying: connect_error, backend unreachable
-  Refreshing --> Connecting: new token, socket.connect()
-  Refreshing --> Gated: refresh token dead
-  Retrying --> Connecting: automatic reconnection
-  Retrying --> Gated: sign out
-
-  Connected --> Running: emit "query", state.busy = true
-  Running --> Connected: done / error / disconnect
-  Connected --> Gated: sign out or session lost
-  Running --> Gated: sign out blocked until the run ends
-```
-
-Two flags carry most of this on the client:
-
-- `state.busy` — a run is on the wire; the composer, attaching, dossier
-  switching and sign-out are all locked.
-- `offline` ([`app.js:139`](../frontend/app.js#L139)) — the last connection
-  attempt failed, so the "can't reach the analyzer" toast is not repeated on
-  each of the twenty retries.
+- **`to=sid`** — every event goes to one socket. No rooms, no broadcast. Two
+  tabs of the same account are two sids and never see each other's runs.
+- **The loop keeps a copy as it forwards.** `answer`, `category`, `run_id` and
+  `title` are accumulated on the way past, so what is written to the ledger is
+  exactly what the analyst was shown — not a second render of it.
 
 ---
 
-# Every operation
+# Part 2 — Every operation
 
-## Op 1 — Cold page load
+## Op 1 — Opening the page
 
-**Trigger:** the analyst opens the page.
-**Channel:** REST only. No socket yet.
+**Socket.IO: not involved. Backend: not involved.**
+
+The page and its assets are static files. In Docker they are served by nginx
+from the frontend image; the backend process sees nothing at all.
+
+No connection is opened at this point, and this is deliberate: the backend
+refuses any handshake that does not carry a valid access token, so a socket
+opened before sign-in would only be refused.
+
+---
+
+## Op 2 — Signing up or signing in
+
+**Socket.IO: not involved.** Plain HTTP.
 
 ```mermaid
 sequenceDiagram
   autonumber
   participant B as Browser
-  participant A as auth.js
-  participant LS as localStorage
-  participant API as POST /api/auth/refresh
-  participant App as app.js
-
-  B->>A: execute auth.js
-  A->>A: setMode("login"), wire the gate
-  A->>LS: read "cfa.session"
-  alt no stored session
-    A-->>B: dispatch auth:signedout (gate stays up)
-    Note over App: app.js has not parsed yet — it never sees this, and does not need to
-  else stored refresh token
-    A->>API: { refresh_token }
-    Note over B,App: app.js finishes loading during this round trip
-    API-->>A: { access_token, refresh_token, user, expires_in }
-    A->>LS: save the rotated pair
-    A->>A: scheduleRefresh(expires_in)
-    A-->>App: dispatch auth:signedin { user }
-    App->>App: startSession(user)
-  end
-```
-
-**What the frontend does, in order:**
-
-1. `Auth.boot()` reads `cfa.session` from `localStorage`.
-2. The **stored access token is never trusted on its own** — it may have
-   expired while the tab was closed. The refresh token is spent instead, which
-   doubles as proof the session is still good.
-3. `save()` stores the rotated pair and arms the refresh timer.
-4. `announceIn()` → `app.js` runs `startSession(user)` (see [Op 3](#op-3--opening-the-connection)).
-5. Meanwhile `app.js`'s own last two lines have already run: `newDossier()`
-   (which renders the dock, the filing register and the dossier stamp) and
-   `autoGrow()`.
-
----
-
-## Op 2 — Signing in or signing up
-
-**Trigger:** the gate form is submitted ([`auth.js:340`](../frontend/auth.js#L340)).
-**Channel:** REST.
-
-**Frontend steps:**
-
-1. `event.preventDefault()`; bail if a submit is already in flight (`busy`).
-2. Read `email`, `password`, and `name` when in signup mode.
-3. Client-side check, signup only: password ≥ 8 characters — the one rule
-   checked here so the analyst is not made to wait for a round trip to hear it.
-4. `setBusy(true)` — disables the submit button, swaps its label to
-   `SIGNING IN…` / `CREATING…`.
-5. `Auth.login()` or `Auth.signup()` → `post()` to `/api/auth/login` or
-   `/api/auth/signup`.
-6. On success: `save(pair)` → `localStorage` + refresh timer → `announceIn()`,
-   then `form.reset()`.
-7. On failure: `readError()` turns FastAPI's response into one sentence —
-   a string `detail`, or the first entry of a validation-error list with its
-   field name. A `TypeError` from `fetch` means the request never reached the
-   backend at all, and is reported as such ("Can't reach the analyzer") rather
-   than as a credentials problem.
-8. `finally` → `setBusy(false)`.
-
-The gate hides itself on `auth:signedin` and re-shows on `auth:signedout`
-([`auth.js:376`](../frontend/auth.js#L376)), toggling `body.is-locked`. Nothing
-behind the gate is reachable until then — the socket is not connected and no
-filing can be staged.
-
----
-
-## Op 3 — Opening the connection
-
-**Trigger:** `auth:signedin` → `startSession(user)`
-([`app.js:1108`](../frontend/app.js#L1108)).
-**Channel:** Socket.IO handshake, then REST for the dock.
-
-```mermaid
-sequenceDiagram
-  autonumber
-  participant App as app.js
-  participant S as socket.io client
-  participant SIO as Socket.IO server
-  participant Auth as AuthService
+  participant API as FastAPI /api/auth
   participant DB as Postgres
 
-  App->>App: stampUser(user), reset dossiers and state.turn
-  App->>S: socket.connect()
-  S->>S: invoke auth callback → { token: Auth.accessToken }
-  S->>SIO: GET /socket.io/?EIO=4&transport=websocket<br/>handshake, auth payload attached
-  SIO->>SIO: _token_from(auth_data, environ)
-  alt no token
-    SIO-->>S: ConnectionRefusedError("Not signed in.")
-    S-->>App: connect_error
+  B->>API: POST /api/auth/signup or /login
+  API->>DB: create or fetch the user, verify the password hash
+  API->>DB: record the refresh token's jti
+  API-->>B: access_token, refresh_token, expires_in, user
+```
+
+The important consequence for the socket layer: this is where the **access
+token** comes from, and that token is the only thing that will get a handshake
+admitted a moment later.
+
+```python
+async def _issue(self, session: AsyncSession, user: User) -> TokenPair:
+    """Mint a pair and record the refresh token's jti. Does not commit."""
+    refresh_token, jti, expires_at = create_refresh_token(user.id)
+    session.add(RefreshToken(jti=jti, user_id=user.id, expires_at=expires_at))
+    return TokenPair(
+        access_token=create_access_token(user.id),
+        refresh_token=refresh_token,
+        expires_in=int(access_lifetime().total_seconds()),
+        user=UserOut.model_validate(user),
+    )
+```
+
+The access token is a signed JWT that is **never looked up in the database** —
+that is the point of it. Only its signature, expiry and type are checked.
+
+---
+
+## Op 3 — A returning analyst (restoring a session)
+
+**Socket.IO: not involved.** `POST /api/auth/refresh`.
+
+The browser spends the stored refresh token for a fresh pair. The backend
+rotates it — the old one is revoked, a new jti is recorded — and answers with a
+new access token.
+
+Why it matters here: the socket handshake that follows carries the **freshly
+minted** access token, so a tab left closed overnight reconnects cleanly
+without ever being refused.
+
+---
+
+## Op 4 — The workbench opens (the handshake)
+
+**Socket.IO: yes — the `connect` handler.** This is the first of only two
+operations that touch the socket layer.
+
+### The handler, in full
+
+```python
+@sio.event
+async def connect(sid: str, environ: dict, auth_data: dict | None = None) -> None:
+    """Admit the connection only if it carries a usable access token."""
+    token = _token_from(auth_data, environ)
+    if not token:
+        logger.info("Handshake from %s refused — no token", sid)
+        raise socketio.exceptions.ConnectionRefusedError("Not signed in.")
+
+    try:
+        async with SessionLocal() as session:
+            user = await auth.user_from_access_token(session, token)
+    except AuthError as error:
+        logger.info("Handshake from %s refused — %s", sid, error)
+        raise socketio.exceptions.ConnectionRefusedError(str(error)) from error
+
+    await sio.save_session(sid, {"user_id": user.id, "email": user.email})
+    logger.info("Client connected: %s (user=%s)", sid, user.email)
+```
+
+### Where the token is read from
+
+```python
+def _token_from(auth_data: dict | None, environ: dict) -> str:
+    """Pull the access token out of the handshake."""
+    if auth_data:
+        token = str(auth_data.get("token") or "").strip()
+        if token:
+            return token.removeprefix("Bearer ").strip()
+
+    header = environ.get("HTTP_AUTHORIZATION", "")
+    if header.startswith("Bearer "):
+        return header[7:].strip()
+    return ""
+```
+
+Two places, because two kinds of client exist: a browser puts the token in
+Socket.IO's own `auth` handshake payload; a script or a test with no handshake
+payload to fill in can use the `Authorization` header instead.
+
+### What the token check actually verifies
+
+```python
+async def user_from_access_token(self, session: AsyncSession, token: str) -> User:
+    claims = decode_token(token, "access")          # signature, expiry, type, sub
+    user = await session.get(User, str(claims["sub"]))
+    if user is None or not user.is_active:
+        raise AuthError("This account is no longer active.")
+    return user
+```
+
+`decode_token` rejects a token that is malformed, expired, tampered with, or
+**of the wrong kind** — a refresh token presented as a bearer credential is
+refused with "That is not an access token."
+
+### The whole operation
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant B as Browser
+  participant SIO as Socket.IO server
+  participant H as connect handler
+  participant DB as Postgres
+
+  B->>SIO: handshake on /socket.io/ with an auth payload
+  SIO->>H: connect(sid, environ, auth_data)
+  H->>H: _token_from(auth_data, environ)
+
+  alt no token at all
+    H-->>B: ConnectionRefusedError "Not signed in."
   else token present
-    SIO->>Auth: user_from_access_token(session, token)
-    Auth->>DB: load the user
-    alt invalid or expired
-      Auth-->>SIO: AuthError
-      SIO-->>S: ConnectionRefusedError(reason)
-      S-->>App: connect_error
+    H->>DB: decode the JWT, load the user
+    alt expired, invalid, or the account is gone
+      DB-->>H: AuthError
+      H-->>B: ConnectionRefusedError with the reason
     else valid
-      SIO->>SIO: sio.save_session(sid, {user_id, email})
-      SIO-->>S: connected
-      S-->>App: "connect"
+      H->>SIO: save_session(sid, user_id + email)
+      H-->>B: connection established
     end
   end
-
-  par in parallel with the handshake
-    App->>App: await loadDossiers()  (REST)
-  end
 ```
 
-**Frontend steps in `startSession`:**
+### Why refuse rather than admit-and-reject
 
-1. `stampUser(user)` — the initial, name and email on the dock.
-2. Reset `state.dossiers = []` and `state.turn = null`.
-3. **`socket.connect()` first**, before listing dossiers. The connection does
-   not depend on the ledger, and a dossier list that fails to load should not
-   stop the analyst asking a question.
-4. `await loadDossiers()` — see [Op 5](#op-5--restoring-the-dock).
-5. **Re-check `Auth.isSignedIn` after the await.** A sign-out (or a second
-   sign-in) can land while the list is in flight; whatever happened last is
-   what should be on the stage.
-6. Open the most recent dossier, or `newDossier()` if the account has none.
-7. `userInput.focus()`.
+Raising `ConnectionRefusedError` makes the **handshake itself** fail, so the
+browser is told immediately and can refresh its token and retry. The
+alternative — admitting the connection and rejecting each query on it — leaves
+a socket that looks healthy and answers nothing.
 
-The `connect` handler itself ([`app.js:141`](../frontend/app.js#L141)) is
-deliberately quiet: it toasts *"Reconnected"* only if `offline` was set, then
-clears the flag. A connection that works is not news.
-
-**What the backend holds after the handshake:** `{user_id, email}` against the
-`sid`. Every later `query` on that connection is answered for that account and
-reads only that account's filings — the browser never sends a user id, and
-could not be believed if it did.
+**Cost:** one database round trip per connection, and only per connection. Every
+question asked afterwards reuses the identity saved against the `sid`, with no
+further token work.
 
 ---
 
-## Op 4 — A refused handshake
+## Op 5 — Filling the dock
 
-**Trigger:** `connect_error` ([`app.js:162`](../frontend/app.js#L162)).
+**Socket.IO: not involved.** `GET /api/conversations`.
 
-A handshake fails in two ways that need opposite responses. Retrying an expired
-token just gets refused twenty more times; retrying an unreachable backend is
-exactly right.
+The dossier list is a normal request with a normal response — one shot, no
+streaming — so it is a REST route. It returns one row per dossier: the client
+id, the title, the message count and the filings attached.
+
+The socket, already connected from [Op 4](#op-4--the-workbench-opens-the-handshake),
+sits idle throughout and is told nothing about the result.
+
+---
+
+## Op 6 — Clicking "New dossier"
+
+**Socket.IO: nothing happens. The backend is not contacted at all.**
+
+This is the operation people expect to be chattier than it is, so it is worth
+being blunt:
 
 ```mermaid
-flowchart TD
-  E["connect_error(error)"] --> M{"error.message matches<br/>/sign|token|session|expire/i ?"}
-  M -- no --> T["toast 'Can't reach the analyzer — retrying…'<br/>(once, guarded by offline)<br/>set offline = true<br/>let the client keep retrying"]
-  M -- "yes, and Auth.isSignedIn" --> R["await Auth.refresh()"]
-  M -- "yes, but signed out" --> T
-  R -- succeeded --> C["socket.connect()<br/>the auth callback picks up the new token"]
-  R -- failed --> G["Auth drops the session →<br/>auth:signedout → gate returns"]
+sequenceDiagram
+  autonumber
+  participant B as Browser
+  participant SIO as Socket.IO server
+  participant DB as Postgres
+
+  Note over B: analyst clicks "New dossier"
+  B->>B: mint a fresh dossier id locally
+  Note over B,SIO: no event is emitted
+  Note over SIO: the connection stays open and idle<br/>it is not told a new dossier exists
+  Note over DB: no row is created
 ```
 
-**Frontend steps:**
+**No event. No room to join. No row.** A dossier is, at this moment, an id the
+browser made up and nothing more.
 
-1. Test the server's refusal message against `/sign|token|session|expire/i`.
-   The backend's refusals read *"Not signed in."*, *"Your session expired"*,
-   *"Invalid token"* — all matched.
-2. If it looks like a credentials problem **and** the client still believes it
-   is signed in: refresh once, then `socket.connect()` again. The `auth`
-   callback picks up the new token automatically.
-3. If the refresh fails, do nothing more — `Auth` has already cleared the
-   session and raised `auth:signedout`, which puts the gate back up. That is
-   the only thing left that helps.
-4. Otherwise: one toast, `offline = true`, and let the client's own twenty
-   reconnection attempts run.
+The backend first hears of that id when one of two things happens:
 
----
-
-## Op 5 — Restoring the dock
-
-**Trigger:** `startSession` → `loadDossiers()`
-([`app.js:301`](../frontend/app.js#L301)).
-**Channel:** REST — `GET /api/conversations`.
-
-**Frontend steps:**
-
-1. `Auth.authFetch("/api/conversations")` — token attached, one 401 retry.
-2. For each row, build a client dossier object:
-
-| Row field | Becomes | Note |
+| Whichever comes first | Route | What creates the row |
 | --- | --- | --- |
-| `id` | `dossier.id` | the **client id** the browser minted originally, not the DB primary key |
-| `title` | `dossier.title` | the name the analyzer gave it |
-| `filings[]` | `dossier.indexed` | the filing register in the dock |
-| `message_count` | `dossier.runNo = ceil(count / 2)` | an estimate — a run is a question plus an answer. Replaced by the real numbering when the dossier is opened |
-| `message_count === 0` | `dossier.loaded = true` | an empty dossier has nothing to fetch |
+| a filing is attached | `POST /api/upload` | `open_conversation(...)` after the ingest |
+| a question is asked | `query` event | `open_conversation(...)` before the graph runs |
 
-3. Rows arrive most-recently-spoken-in first, so `state.dossiers[0]` is what
-   goes on the stage.
-4. **Messages are not fetched here.** An analyst with forty dossiers should not
-   wait for the thirty-nine they are not going to open.
-5. If the call fails, `startSession` catches it, toasts, and carries on with an
-   empty dossier — the socket is already connected and questions still work.
+```python
+async def open_conversation(
+    self, session: AsyncSession, user_id: str, client_id: str, title: str = ""
+) -> Conversation:
+    """The analyst's conversation for ``client_id``, created if it is new.
 
----
-
-## Op 6 — Opening a stored dossier
-
-**Trigger:** clicking a dossier row in the dock → `openDossier(dossier)`
-([`app.js:877`](../frontend/app.js#L877)).
-**Channel:** REST — `GET /api/conversations/{id}/messages`.
-
-```mermaid
-sequenceDiagram
-  autonumber
-  participant U as Analyst
-  participant App as app.js
-  participant API as GET /api/conversations/{id}/messages
-
-  U->>App: click a dossier row
-  App->>App: refuse if state.busy ("wait for the run to finish")
-  App->>App: state.active = dossier, state.turn = null
-  App->>App: messagesList.replaceChildren(dossier.stack)
-  App->>App: renderTray + renderFilings + renderDossiers + stampSession
-  alt dossier.loaded === false
-    App->>API: ?limit=50
-    API-->>App: { messages[], next_before_seq }
-    App->>App: renderStoredRuns() — pair question+answer into runs
-    App->>App: dossier.earlier = next_before_seq
-    App->>App: renderEarlierControl() — "load earlier runs" button
-    App->>App: replaceChildren + scrollToBottom(true)
-  end
+    The browser mints the dossier id, so the first question in a dossier is
+    also what brings its row into being. Always scoped by ``user_id``: an
+    id from one account can never resolve to another's conversation.
+    """
+    conversation = await self.find(session, user_id, client_id)
+    if conversation is not None:
+        return conversation
+    ...
 ```
 
-**Frontend steps in `openDossier`:**
-
-1. `state.active = dossier`.
-2. **`state.turn = null`** — any run still on the wire belongs to the dossier
-   being left. `liveTurn` will now drop everything it sends back
-   (see [Op 11](#op-11--liveturn-the-staleness-guard)).
-3. `messagesList.replaceChildren(dossier.stack)` — each dossier owns its own
-   detached `.run-stack` element, so ledger entries are **moved, not rebuilt**.
-   A dossier comes back exactly as it was left, down to the faults recorded on
-   individual runs.
-4. Redraw the tray (staged filings), the filing register, the dock and the
-   dossier stamp.
-5. If `!dossier.loaded`, call `hydrateDossier(dossier)`.
-
-**Frontend steps in `hydrateDossier`**
-([`app.js:328`](../frontend/app.js#L328)):
-
-1. Guard on `dossier.loading` so two clicks do not fetch twice; set it and
-   re-render the dock so the row shows its loading state.
-2. Build `?limit=50`, plus `&before_seq=<cursor>` when paging backwards.
-3. `404` → the dossier was discarded from another tab. Mark it `loaded` and
-   stop; nothing is wrong.
-4. `renderStoredRuns()` walks the page in order: a `user` message opens a run,
-   the `assistant` message that follows closes it. Pages arrive aligned to
-   whole runs, so the walk never splits a pair. An orphaned answer is shown on
-   its own rather than dropped.
-5. Run numbering is taken from `meta.run` on the stored questions, so the next
-   question continues the numbering instead of restarting it.
-6. `next_before_seq` is stored as `dossier.earlier`; when it is non-null a
-   `load earlier runs` button is prepended, which calls `hydrateDossier` again
-   with the cursor and **prepends** the new page.
-7. On failure: `loaded = true` anyway, so it does not retry on every open, plus
-   a toast. The dossier opens empty and asking a question still works — the run
-   is appended to whatever the backend already has, which is the record that
-   matters.
+**Why this is a good design, not a missing feature:** an analyst who opens five
+dossiers and uses one leaves four that never touch the database. Nothing has to
+be cleaned up, because nothing was created. And because the id is scoped by
+`user_id` on every lookup, an id from one account can never resolve to
+another's conversation — the browser minting it is not a security question.
 
 ---
 
-## Op 7 — Opening a new dossier
+## Op 7 — Attaching a filing
 
-**Trigger:** the *New dossier* button → `newDossier()`
-([`app.js:899`](../frontend/app.js#L899)).
-**Channel:** none. This operation touches no network at all.
+**Socket.IO: not involved.** `POST /api/upload`, multipart.
 
-**Frontend steps:**
-
-1. Refuse if `state.busy`.
-2. `makeDossier()` mints a client id with `crypto.randomUUID()` (dashes
-   stripped) and creates a detached `.run-stack` element.
-3. Push it onto `state.dossiers` and `openDossier()` it.
-4. Close the dock on mobile, toast *"New dossier opened"*.
-
-**The row on the backend does not exist yet.** It is created lazily by
-`open_conversation()` on whichever comes first: the first `POST /api/upload`
-carrying this `session_id`, or the first `query` event. That is why an analyst
-can open five dossiers, use one, and leave four that never reach the database.
-
-The dossiers already open stay open, filings and all — a new one simply starts
-empty alongside them.
-
----
-
-## Op 8 — Attaching a filing
-
-**Trigger:** the attach button, a paste with files, or a drop anywhere on the window.
-**Channel:** REST — `POST /api/upload` (multipart). **Not** the socket.
-
-Uploads go over HTTP because a 10-K PDF is tens of megabytes and Socket.IO is
-built for many small messages, not one large one. `nginx.conf` raises
-`client_max_body_size` to 64m and the read timeout to 300s for exactly this.
-
-### Staging (`stageFiles`, [`app.js:576`](../frontend/app.js#L576))
-
-1. Refuse while `state.busy` — a filing rides along with a question, and there
-   is nowhere to put one while a run is already on the wire.
-2. Filter by extension against `.pdf`, `.txt`, `.md`, `.csv`; each rejection
-   gets its own toast naming the file.
-3. Push `{id, file, name, size, status: "staged"}` onto
-   `state.active.pending` — the **active dossier's** tray, not a global one.
-4. `renderTray()` draws a chip per file, then focus returns to the composer.
-
-Chip states: `staged` (shows the file size) → `uploading` (shows "adding" and a
-spinner, and the remove button disappears) → `done` ("ready") or `error`
-("failed").
-
-### Sending (`uploadPending`, [`app.js:639`](../frontend/app.js#L639))
-
-Called from `submitQuery`, **before** the `query` event is emitted, so the same
-run can read what it just attached.
+Filings go over HTTP for the obvious reason: a 10-K PDF is tens of megabytes,
+and Socket.IO is built for many small messages rather than one large one. In
+Docker, nginx is configured for exactly this — `client_max_body_size 64m` and a
+300 s read timeout, because embedding a long filing on a local model is not
+fast.
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant App as app.js
+  participant B as Browser
   participant API as POST /api/upload
   participant V as Vector store
   participant DB as Postgres
+  participant SIO as Socket.IO server
 
-  loop each staged file, sequentially
-    App->>App: item.status = "uploading", renderTray()
-    App->>API: FormData { file, session_id } + Bearer token
-    API->>V: ingest → chunks in collection "<user_id>:<session_id>"
-    API->>DB: open_conversation() + record_filing()
-    API-->>App: { status, filename, chunks_ingested, session_id }
-    App->>App: item.status = "done", dossier.indexed.push the filing
-    App->>App: markRunFile(turn, name, "ready")
-  end
+  B->>API: file + session_id + Bearer token
+  API->>API: scoped_session_id(user.id, session_id)
+  API->>V: ingest → chunks into that dossier's own collection
+  API->>DB: open_conversation() — the row appears here if it did not exist
+  API->>DB: record_filing(name, chunk count)
+  API-->>B: status, filename, chunks_ingested, session_id
+  Note over SIO: the socket is not told anything
 ```
 
-**Frontend steps per file:**
+The one thing this shares with the socket layer is the **scoping function**:
 
-1. Resolve the target dossier from `turn.sessionId` — **not** `state.active`.
-   A run uploads into the dossier it was opened in, even if the analyst has
-   since moved on. Every UI redraw is guarded with
-   `if (dossier === state.active)`.
-2. Build `FormData` with the file and the `session_id`.
-3. `Auth.authFetch("/api/upload", {method: "POST", body: formData})` — the token
-   is attached and, if it has just expired, refreshed and the upload **replayed**
-   rather than lost.
-4. Parse the body with `.catch(() => ({}))`. A failure can arrive as a proxy's
-   HTML error page, and parsing that would replace the real reason with a
-   parser error.
-5. On success: mark the chip `done`, push the filing into `dossier.indexed`
-   (the dock register), and flip the file's badge on the run itself to "ready".
-6. On failure: mark the chip and the run badge `failed`, write a fault line into
-   the run, and toast. A `TypeError` is reported as "the analyzer is not
-   reachable"; and the file name is only repeated if the backend's own message
-   did not already include it, so the analyst reads one sentence rather than two.
-7. Files upload **sequentially**, not in parallel — embedding is the slow part
-   and firing five at once at a local model helps no one.
-8. `uploadPending` returns `false` if any file failed, and `submitQuery` then
-   abandons the run without emitting: a question whose filing did not land
-   would be answered from nothing.
+```python
+def scoped_session_id(user_id: str, session_id: str) -> str:
+    """Namespace a browser-supplied chat id under the account that owns it."""
+    return f"{user_id}:{session_id}"
+```
+
+The upload route indexes into `scoped_session_id(user.id, session_id)`, and the
+`query` handler later searches `scoped_session_id(user_id, session_id)`. Same
+function, same collection — which is the entire reason a question asked over
+the socket can read a filing that arrived over HTTP.
+
+It is also what makes filings unreachable across accounts. Two analysts whose
+browsers minted the same dossier id still get two different collections, and
+there is no id a signed-in user can send that resolves to someone else's
+uploads.
+
+The response deliberately hands back the **browser's** id, not the scoped one:
+
+```python
+# The scoped id is a backend detail; the browser gets back the id it sent.
+return {**result, "session_id": session_id}
+```
 
 ---
 
-## Op 9 — Asking a question
+## Op 8 — Asking the first question in a dossier
 
-**Trigger:** Enter (without Shift), the RUN button, or an opening card.
-**Channel:** REST for any staged filings, then Socket.IO for the question.
+**Socket.IO: yes — the `query` handler.** This is the operation the whole
+real-time layer exists for. It runs in five stages.
 
-This is the one operation that uses the socket.
-
-### The full round trip
+### The shape of it
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant U as Analyst
-  participant App as app.js
-  participant S as socket
-  participant H as socket.py handler
+  participant B as Browser
+  participant H as query handler
   participant DB as Postgres
   participant P as AnalysisPipeline
-  participant G as LangGraph
+  participant G as Graph nodes
 
-  U->>App: Enter / RUN
-  App->>App: guards — busy? signed in? anything to send?
-  App->>App: setBusy(true), hide the welcome hero
-  App->>App: createRun() → article in dossier.stack, state.turn
-  App->>App: clear the composer, setWork("starting")
+  B->>H: query { query, session_id, title, files[] }
+  H->>H: 1. read the payload, resolve the user from the sid
+  H->>H: 2. refuse if there is no user or no dossier id
+  H->>DB: 3. open_conversation → context_for → record the question
+  H->>P: 4. query_stream(question, scoped id, title, history)
 
-  opt staged filings
-    App->>App: setWork("adding the filing")
-    App->>App: await uploadPending() — REST, see Op 8
+  P-->>H: run_started
+  H-->>B: run_started
+  G-->>H: status retrieve
+  H-->>B: status retrieve
+  G-->>H: title  (first question only)
+  H-->>B: title
+  G-->>H: status route → route
+  H-->>B: status route → route
+  G-->>H: status analyze
+  H-->>B: status analyze
+  loop the answer, fragment by fragment
+    G-->>H: token
+    H-->>B: token
   end
+  P-->>H: done
+  H-->>B: done
 
-  App->>S: emit "query" { query, session_id, title, files[] }
-  S->>H: query(sid, data)
-  H->>H: get_session(sid) → user_id  (refuse if missing)
-  H->>H: refuse if session_id is blank
-  H->>DB: open_conversation(user_id, session_id, title)
-  H->>DB: context_for() — summary + recent turns
-  H->>DB: record_message(role=user, meta={files})
-  H->>P: query_stream(question, scoped_session_id, title, history)
-
-  P-->>H: {event: run_started, run_id}
-  H-->>App: run_started            → turn.runId = run_id
-  P->>G: astream(stream_mode=["custom","messages"])
-  G-->>H: status stage=retrieve    → "reading the filing"
-  G-->>H: status stage=route       → "working out what you're asking"
-  opt dossier not yet named
-    G-->>H: title                  → nameDossier(), dock + stamp update
-  end
-  G-->>H: route category=risks     → tagRun() badge
-  G-->>H: status stage=analyze     → "writing the risks answer"
-  loop every token
-    G-->>H: token content="…"      → append to turn.raw, marked.parse, scroll
-  end
-  P-->>H: {event: done, run_id, category, title}
-  H-->>App: done                   → clearWork, remove .is-live, finishTurn()
-  H->>DB: _record_answer() — the assistant message, in a fresh session
-  H->>H: schedule_summary() — off the critical path
+  H->>DB: 5. record the answer in a fresh session
+  H->>H: schedule_summary — off the critical path
 ```
 
-### Frontend steps in `submitQuery` ([`app.js:504`](../frontend/app.js#L504))
+### Stage 1 — Read the payload, resolve the user
 
-1. **Return immediately if `state.busy`.** One run at a time per browser;
-   `state.turn` is a single slot, not a map.
-2. **Return if `!Auth.isSignedIn`** with a toast. The gate may have gone up
-   between opening the page and asking.
-3. Read the text — from `overrideText` when an opening card was clicked,
-   otherwise from the composer — and snapshot `dossier.pending`.
-4. If there is neither text nor a file, just focus the composer and stop.
-5. Hide the welcome hero; `setBusy(true)` disables the composer, the send
-   button and the attach button, and sets `body.is-busy`.
-6. `createRun()` builds the run article, appends it to **this dossier's** stack,
-   and returns the `turn` object — which captures `sessionId: dossier.id` for
-   its whole life.
-7. Clear the composer (only when the text came from it) and reset its height.
-8. Upload any staged filings; abandon the run if that fails.
-9. `socket.emit("query", {...})`, then `scrollToBottom(true)` to re-arm
-   auto-follow.
+```python
+question = (data.get("query") or "").strip() or FALLBACK_QUERY
+session_id = (data.get("session_id") or "").strip()
+title = (data.get("title") or "").strip()
+attachments = [str(name) for name in (data.get("files") or [])][:20]
 
-### The emitted payload
-
-```js
-socket.emit("query", {
-  query:      text,                    // may be "" if only a file was attached
-  session_id: turn.sessionId,          // the dossier, NOT state.active.id
-  title:      dossier.title,           // "" until the analyzer names it
-  files:      files.map((f) => f.name),// recorded with the question
-});
+socket_session = await sio.get_session(sid)
+user_id = socket_session.get("user_id") if socket_session else None
 ```
 
-| Field | Why the backend needs it |
+| Field | What the backend does with it |
 | --- | --- |
-| `query` | The question. Empty is allowed — the handler substitutes `FALLBACK_QUERY` ("Provide an executive summary…") so the router still has something to classify. |
-| `session_id` | Scopes retrieval to this dossier's filings and names the conversation the run is written into. **Refused if blank** — a query with no dossier has no filings it is entitled to read. |
-| `title` | Sending the name the dossier already has is what stops the analyzer renaming it on every run. The stored name still wins server-side, so a stale client cannot force a rename. |
-| `files` | Recorded in the question's `meta`, so a reopened dossier still shows which filings a run was asked against. Capped at 20 server-side. |
+| `query` | The question. **Empty is legal** — a filing attached with no typed question falls back to `FALLBACK_QUERY` ("Provide an executive summary and financial overview of this filing."), because the router still needs something to classify. |
+| `session_id` | The dossier. Scopes retrieval, and names the conversation the run is written into. |
+| `title` | The name this dossier already carries. Blank means "not named yet". |
+| `files` | Names only — the bytes arrived over HTTP already. Capped at 20 and recorded with the question so a reopened dossier still shows what a run was asked against. |
 
-Everything is keyed off `turn.sessionId` rather than the live dossier: a run
-uploads into, and asks of, the dossier it was opened in — never another.
+**Note what is *not* in the payload: the user.** The identity comes off the
+socket session, established at handshake. The browser cannot send a user id,
+and would not be believed if it did.
 
-### What the backend does with the identity
+### Stage 2 — The two refusals
 
-Nothing in the payload identifies the analyst. The handler reads `user_id` off
-the socket session saved at handshake, and the pipeline is called with
-`scoped_session_id(user_id, session_id)` — `"<user_id>:<client_id>"`. Two
-accounts that somehow minted the same client id still get two different vector
-collections. The events that come back carry the **client's** id, not the
-scoped one; how it is namespaced on the backend is not the browser's business.
+```python
+if not user_id:
+    # Only reachable if the session went missing after a valid handshake.
+    await sio.emit("error",
+        {"message": "Your session expired — sign in again.", "session_id": session_id}, to=sid)
+    return
+
+# A query with no dossier behind it has no filings it is entitled to
+# read, so it is refused rather than answered from nothing.
+if not session_id:
+    logger.warning("Query from %s carried no session id — refused", sid)
+    await sio.emit("error",
+        {"message": "This chat has no id — reload the page and try again."}, to=sid)
+    return
+```
+
+Both refusals come back as an `error` event rather than silence, so the browser
+can unlock its composer and show the reason on the run.
+
+### Stage 3 — Open the ledger *before* the graph starts
+
+```python
+async with SessionLocal() as db:
+    conversation = await history_service.open_conversation(db, user_id, session_id, title)
+    conversation_pk = conversation.id
+    # The stored name wins over the one the browser sent: the server named
+    # this dossier, and a client that has fallen behind should not be able
+    # to have it renamed.
+    title = conversation.title or title
+
+    # Assembled *before* the question is recorded — it is being asked now,
+    # and would otherwise arrive in the prompt twice.
+    history = await history_service.context_for(db, conversation)
+    await history_service.record_message(
+        db, conversation, ROLE_USER, question,
+        meta={"files": attachments} if attachments else {},
+    )
+```
+
+Three decisions live in those few lines:
+
+1. **The row is created here** if this is the dossier's first question — see
+   [Op 6](#op-6--clicking-new-dossier).
+2. **The stored title wins.** A stale browser cannot rename a dossier by
+   sending an old name back.
+3. **History is assembled before the question is recorded.** Reverse the two and
+   the question the model is being asked would also appear in the history it is
+   given as context.
+
+If any of this fails, the run never starts:
+
+```python
+except Exception:
+    logger.exception("Could not open the ledger for chat %s", session_id)
+    await sio.emit("error",
+        {"message": "Could not open this dossier's history — try again.",
+         "session_id": session_id}, to=sid)
+    return
+```
+
+### Stage 4 — Stream, forwarding as you go
+
+The forwarding loop from [§4](#4-the-seven-events-the-server-sends) runs here.
+What it is iterating over is the pipeline, which drives the compiled graph in
+two stream modes at once:
+
+```python
+# "custom"   -> status/route events written by the nodes
+# "messages" -> the answer's tokens as the LLM produces them
+_STREAM_MODES = ["custom", "messages"]
+
+async for mode, chunk in self.graph.astream(
+    graph_input, config=config, stream_mode=_STREAM_MODES
+):
+    if mode == "custom":
+        ...
+        yield chunk
+    elif mode == "messages":
+        message, metadata = chunk
+        # Only the analysis nodes stream to the user — the router's own
+        # LLM call comes through here too and must be dropped.
+        if metadata.get("langgraph_node") not in CATEGORIES:
+            continue
+        content = str(message.text)
+        if content:
+            yield {"event": "token", "content": content}
+```
+
+That filter is load-bearing. The router is an LLM call too, and without the
+check its classification reasoning would stream to the analyst as if it were
+part of the answer.
+
+### What makes the *first* question different
+
+Only one thing: the dossier has no name, so the router names it while it
+classifies:
+
+```python
+if title:
+    category = await self.router.classify(query)
+else:
+    category, title = await asyncio.gather(
+        self.router.classify(query),
+        self.router.name_chat(query),
+    )
+    _emit("title", title=title)
+```
+
+Naming runs **alongside** the classification, not after it, so the first
+question in a dossier does not wait any longer for its answer than the ones
+that follow. Every later run arrives carrying that name and leaves it alone —
+which is why `title` is an event you see once per dossier and never again.
+
+### The other first-question case: no filing attached
+
+If nothing has been ingested into this dossier, retrieval comes back empty and
+the graph routes to a terminal node instead of an analysis one:
+
+```python
+async def no_filing(self, state: FilingState) -> FilingState:
+    """Terminal node for a chat that has nothing indexed."""
+    logger.info("No filing in this chat — asking for one instead of answering")
+    _emit("token", content=NO_FILING_MESSAGE)
+    return {"answer": NO_FILING_MESSAGE, "category": DEFAULT_CATEGORY}
+```
+
+It emits its message **as a `token` event**, so the client needs no special
+case: it is just an answer that happens to say "attach a filing and ask again".
+Without this node the analysis prompt would run on an empty context and the
+model would invent a plausible-looking report out of nothing.
+
+### Stage 5 — Record the answer, always
+
+```python
+await _record_answer(
+    conversation_pk, "".join(answer),
+    category=category, run_id=run_id, title=title, failure=failure,
+)
+```
+
+```python
+async def _record_answer(conversation_pk, answer, category, run_id, title, failure) -> None:
+    """Write the answer — or the reason there wasn't one — into the ledger."""
+    try:
+        async with SessionLocal() as db:
+            conversation = await db.get(Conversation, conversation_pk)
+            if conversation is None:  # deleted mid-run
+                return
+
+            if title and title != conversation.title:
+                conversation = await history_service.set_title(db, conversation, title)
+
+            content = answer.strip() or failure or "No answer came back for this question."
+            await history_service.record_message(
+                db, conversation, ROLE_ASSISTANT, content,
+                status=STATUS_ERROR if failure else STATUS_OK,
+                meta={...category, run_id, error...},
+            )
+
+        # Only once the answer is safely stored, and only after it has been
+        # delivered: folding old turns is another model call, and no analyst
+        # should be kept waiting on it.
+        history_service.schedule_summary(conversation_pk)
+    except Exception:
+        logger.exception("Could not record the answer for conversation %s", conversation_pk)
+```
+
+Four properties of this function:
+
+- **It runs whether the stream succeeded or not.** A failed run is recorded and
+  marked `status="error"` — the analyst should see on their next visit that the
+  question was asked and did not land, rather than find it missing.
+- **It never raises.** Losing the record of an answer the analyst has already
+  read is not worth turning into an error they have to act on.
+- **It tolerates the dossier being deleted mid-run** — `if conversation is None:
+  return`. See [Op 14](#op-14--discarding-a-dossier).
+- **Summarisation is scheduled after delivery**, never before it.
 
 ---
 
-## Op 10 — Every inbound event
+## Op 9 — Asking a follow-up in the same dossier
 
-Seven application events plus three transport ones. Each application handler
-starts by asking `liveTurn(data)` whether the event is still relevant.
+**Socket.IO: yes — the same `query` handler, with no special case for it.**
 
-```mermaid
-flowchart LR
-  RS["run_started"] --> A1["turn.runId = run_id"]
-  ST["status"] --> A2["setWork — the progress line"]
-  RT["route"] --> A3["tagRun — the category badge"]
-  TI["title"] --> A4["nameDossier — dock row + stamp"]
-  TK["token"] --> A5["turn.raw += content<br/>marked.parse → innerHTML<br/>scrollToBottom"]
-  DN["done"] --> A6["nameDossier, clearWork, tagRun,<br/>drop .is-live, finishTurn"]
-  ER["error"] --> A7["addFault on the run + toast,<br/>finishTurn"]
-```
-
-### `run_started`
-
-```json
-{ "run_id": "8f3c…", "session_id": "a1b2…" }
-```
-
-Stores `turn.runId`. Nothing on screen changes — the id is kept so a run on the
-analyst's screen can be matched to the backend's log lines
-(`Run 8f3c… started: …`) when something needs explaining.
-
-### `status`
-
-```json
-{ "stage": "retrieve" | "route" | "analyze", "category": "risks", "session_id": "…" }
-```
-
-The one place graph vocabulary is translated into the analyst's
-([`app.js:205`](../frontend/app.js#L205)):
-
-| `stage` | Shown in the run's work line |
-| --- | --- |
-| `retrieve` | "reading the filing" |
-| `route` | "working out what you're asking" |
-| `analyze` | "writing the *&lt;category&gt;* answer" — via `labelOf(data.category)` |
-
-The pipeline behind an answer is deliberately not surfaced beyond this. No node
-names, no chunk counts, no thread ids.
-
-### `route`
-
-```json
-{ "category": "risks", "session_id": "…" }
-```
-
-`tagRun()` looks the id up in the `CATEGORIES` table, un-hides the run badge,
-and sets its label and `data-tone` (which the stylesheet colours). An unknown
-id is ignored rather than rendered raw.
-
-The eight categories: `financials`, `compliance`, `risks`, `shareholding`,
-`governance`, `mda`, `summary`, `qa`.
-
-### `title`
-
-```json
-{ "title": "FY2024 Risk Review", "session_id": "…" }
-```
-
-Emitted **only on the first question in a dossier** — the router names the
-dossier alongside classifying it, and only when the incoming `title` was blank.
-
-`nameDossier()` ([`app.js:232`](../frontend/app.js#L232)) is keyed off
-`data.session_id`, **not** the dossier on screen: the name belongs to the
-dossier the run was opened in, whichever one the analyst happens to be looking
-at when it lands. It re-renders the dock, and updates the stage's stamp only if
-that dossier is the active one.
-
-### `token`
-
-```json
-{ "content": "The filing discloses ", "session_id": "…" }
-```
-
-The hot path — dozens to thousands per answer
-([`app.js:241`](../frontend/app.js#L241)):
-
-1. `clearWork(turn)` — the first token replaces the progress line.
-2. `turn.raw += data.content` — **the raw markdown is accumulated**, and the
-   whole of it re-parsed each time. Parsing per token would break on
-   half-finished syntax (an unclosed `**`, a table mid-row).
-3. `turn.body.innerHTML = marked.parse(turn.raw)`, with `escapeHtml` as the
-   fallback if `marked` failed to load.
-4. `classList.add("streaming")` — the caret the stylesheet animates.
-5. `scrollToBottom()` — *soft*: it only moves if the analyst is still parked at
-   the bottom (see [`stickToBottom`](../frontend/app.js#L1025)). Scrolling up
-   mid-run detaches the view; tokens keep arriving without yanking it back.
-
-A dossier with no filings attached also arrives as a `token` — the `no_filing`
-node emits the "attach a filing and ask again" message on the same stream, so
-the client needs no special case for it.
-
-### `done`
-
-```json
-{ "run_id": "8f3c…", "category": "risks", "title": "FY2024 Risk Review", "session_id": "…" }
-```
-
-1. **`nameDossier(data)` runs before the staleness check** — a name is worth
-   keeping even when it belongs to a dossier the analyst has already left.
-2. Then `liveTurn`; a stale `done` must return here rather than fall through,
-   or it would end whichever run is live *now*.
-3. `clearWork`, drop the `streaming` class.
-4. If nothing streamed, write *"No answer came back for this question."* into
-   the body so the run is never left blank.
-5. `tagRun()` again — belt and braces, so a run whose `route` was missed still
-   carries its tag.
-6. Remove `is-live` from the article and call `finishTurn()`, which clears
-   `state.turn` and releases the busy lock.
-
-### `error`
-
-```json
-{ "message": "…", "session_id": "…" }
-```
-
-Sent for: a missing socket session, a blank `session_id`, a ledger that could
-not be opened, or an exception raised mid-stream. The frontend clears the work
-line, drops `streaming` and `is-live`, appends a `.fault` line **to the run
-itself**, toasts, and finishes the turn.
-
-The fault goes on the run and not only in a toast because a toast says it once
-and leaves; the ledger has to still explain the failure when the analyst scrolls
-back to it tomorrow. The backend records the failed turn too, marked
-`status: "error"`, and `fillStoredAnswer` redraws it as the same fault line.
-
-### The three transport events
-
-| Event | Frontend response |
-| --- | --- |
-| `connect` | Toast *"Reconnected"* only if `offline` was set; clear the flag. |
-| `disconnect` | If a run was live: drop `is-live`, toast *"Connection lost — the run was interrupted"*, `finishTurn()` — see [Op 12](#op-12--losing-the-connection-mid-run). |
-| `connect_error` | The two-branch decision in [Op 4](#op-4--a-refused-handshake). |
-
----
-
-## Op 11 — `liveTurn`, the staleness guard
-
-Every application handler passes its payload through
-[`liveTurn`](../frontend/app.js#L192) first:
-
-```js
-function liveTurn(data) {
-  const turn = state.turn;
-  if (!turn || turn.sessionId !== state.active.id) return null;
-  if (data?.session_id && data.session_id !== state.active.id) return null;
-  return turn;
-}
-```
-
-Two keys must agree before an event may write to the screen:
+Three things differ from [Op 8](#op-8--asking-the-first-question-in-a-dossier),
+and all three are consequences of state that already exists rather than
+different code paths:
 
 ```mermaid
 flowchart TD
-  E["incoming event"] --> A{"state.turn exists?"}
-  A -- no --> D["drop"]
-  A -- yes --> B{"turn.sessionId === state.active.id?"}
-  B -- no --> D
-  B -- yes --> C{"data.session_id === state.active.id?"}
-  C -- no --> D
-  C -- yes --> W["write to the run"]
+  A["query arrives"] --> B["open_conversation<br/>finds the existing row — no insert"]
+  B --> C["context_for<br/>now has something to return"]
+  C --> D["title is already set<br/>→ router only classifies, emits NO title event"]
+  D --> E["the rest is identical"]
 ```
 
-- `turn.sessionId` — the dossier the run **was opened in**, captured at
-  `createRun` and never reassigned.
-- `data.session_id` — the dossier the **server** produced the event for. This
-  is why the backend stamps `payload["session_id"] = session_id` onto every
-  single event before emitting it.
+### What `context_for` gives the run
 
-### The scenario it exists for
+```python
+async def context_for(self, session, conversation) -> ContextHistory:
+    """Context history: the summary plus the tail that fits the budget.
+
+    Four things narrow it, in order — anything already folded into the
+    summary is dropped, then the runs that failed, then all but the last
+    ``context_messages`` turns, then whatever does not fit ``context_tokens``.
+    """
+```
+
+So a follow-up is answered with: the rolling summary of everything old, plus
+the most recent turns that fit the token budget. Failed runs are excluded —
+they stay in the ledger for the analyst to see, but conditioning the next
+answer on an error message would only teach the model to apologise.
+
+### And what the client sends that keeps the name stable
+
+The browser sends the dossier's existing `title` back with every question. The
+handler prefers the stored one anyway, then passes it into the pipeline, where
+a non-empty title means "already named" and the naming call is skipped. That is
+the whole mechanism: a dossier is named once, on the question that opened it.
+
+**Streaming, retrieval, forwarding and recording are byte-for-byte the same as
+the first question.** There is no "conversation continues" flag anywhere.
+
+---
+
+## Op 10 — Opening an old dossier
+
+**Socket.IO: nothing happens.** `GET /api/conversations/{id}/messages`.
+
+Reopening a dossier is a paginated read of the ledger, and a paginated read is a
+request-response — so it is a REST route, not an event.
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant U as Analyst
-  participant App as app.js
-  participant SIO as Backend
+  participant B as Browser
+  participant API as GET /api/conversations/:id/messages
+  participant DB as Postgres
+  participant SIO as Socket.IO server
 
-  U->>App: ask a question in dossier A
-  App->>SIO: emit query { session_id: A }
-  SIO-->>App: token (A) → written into A's run
-  U->>App: click dossier B
-  App->>App: openDossier(B) — state.active = B, state.turn = null
-  SIO-->>App: token (A)
-  App->>App: liveTurn → state.turn is null → dropped
-  SIO-->>App: done (A)
-  App->>App: nameDossier(A) still applies the name to A's dock row
-  App->>App: liveTurn → null → the run is not closed on screen
-  Note over SIO: the answer is still recorded in full, server-side
-```
-
-Nothing is lost: the backend writes the complete answer to the ledger whether
-the browser is watching or not, so reopening dossier A shows the finished run.
-
-In practice the busy lock ([§8](#8-the-busy-lock)) makes a mid-run switch
-hard to trigger — but the guard is what makes it *safe*, and it also covers a
-run cut short by a dropped connection whose events arrive after the analyst has
-moved on.
-
----
-
-## Op 12 — Losing the connection mid-run
-
-**Trigger:** the `disconnect` handler ([`app.js:146`](../frontend/app.js#L146)).
-
-**Frontend steps:**
-
-1. If `state.busy` is false, do nothing — an idle disconnect is not the
-   analyst's problem, and the client will reconnect on its own.
-2. If a run was live: drop `is-live` from the article (the animated caret
-   stops), toast *"Connection lost — the run was interrupted"*, and
-   `finishTurn()` so the composer unlocks.
-3. The partial answer stays on screen exactly as far as it got.
-
-The run does **not** resume on reconnect, and this is not a bug in the client:
-the backend's `query` handler is still running, and will still record the
-answer — a reconnected socket is a new `sid` with no way to reattach to a run
-that was streaming to the old one. Reopening the dossier fetches the completed
-answer from the ledger.
-
----
-
-## Op 13 — Reconnecting
-
-Handled entirely by the Socket.IO client — up to 20 attempts, backing off from
-a 1.5 s base delay to the client's 5 s ceiling — with two client behaviours
-layered on:
-
-```mermaid
-sequenceDiagram
-  autonumber
-  participant S as socket.io client
-  participant App as app.js
-  participant SIO as Backend
-
-  Note over S: connection drops
-  S-->>App: "disconnect" → interrupt any live run
-  loop up to 20 attempts
-    S->>S: invoke the auth callback again
-    Note right of S: → { token: Auth.accessToken }<br/>whatever is current NOW
-    S->>SIO: handshake
-    alt token still valid
-      SIO-->>S: connected
-      S-->>App: "connect" → toast "Reconnected" if offline was set
-    else refused
-      SIO-->>S: ConnectionRefusedError
-      S-->>App: "connect_error" → refresh + reconnect, or toast
-    end
+  B->>API: ?limit=50  (+ Bearer token)
+  API->>DB: find the conversation, scoped by user_id
+  alt not this analyst's dossier, or gone
+    API-->>B: 404 "No such dossier"
+  else found
+    API->>DB: page_messages — newest page, oldest first
+    API-->>B: messages[] + next_before_seq
   end
+  Note over SIO: no event, no room change, no notification
 ```
 
-Because the refresh timer in `auth.js` keeps rotating tokens in the background
-whether the socket is up or not, a laptop that wakes after an hour typically
-reconnects with a token minted seconds ago. The `connect_error` refresh path is
-the backstop for when it does not.
+### The part people expect and that does not exist
 
-Nothing is replayed on reconnect. The client re-establishes identity and waits;
-dossier state is already in memory, and the ledger is the source of truth for
-anything that finished while the socket was away.
+There is **no "switch dossier" event**, no room to leave, no subscription to
+move. The connection was never told which dossier was open
+([§3](#3-what-the-backend-remembers-about-a-connection)), so there is nothing to
+update. The next `query` simply carries a different `session_id`, and the
+handler treats it exactly like any other.
+
+That is what makes an old dossier and a new one indistinguishable to the socket
+layer:
+
+```mermaid
+flowchart LR
+  Q1["query { session_id: A }"] --> H["query handler"]
+  Q2["query { session_id: B }"] --> H
+  Q3["query { session_id: C }"] --> H
+  H --> R["open_conversation(user_id, session_id)<br/>→ found or created<br/>→ context_for → graph → stream"]
+```
+
+### Display history vs. context history
+
+Two different things, easily confused:
+
+| | Read by | Contains | Sized by |
+| --- | --- | --- | --- |
+| **display** history | `GET .../messages` | everything that was ever said, untrimmed, including failed runs | a page cursor (`before_seq`) |
+| **context** history | `context_for` inside the `query` handler | a summary plus the recent successful turns | a token budget |
+
+The analyst sees the first. The model is given the second. Reopening a dossier
+fetches the first and has no effect on the second.
+
+---
+
+## Op 11 — Loading earlier runs
+
+**Socket.IO: nothing happens.** The same REST route with a cursor.
+
+```python
+messages = await history.page_messages(session, conversation, limit=limit, before_seq=before_seq)
+
+# There is an earlier page only if this one did not reach the first
+# message. Reading the oldest seq off the page beats a second COUNT query.
+oldest = messages[0].seq if messages else None
+next_before_seq = oldest if oldest is not None and oldest > 1 else None
+```
+
+History is read backwards from the end, one page at a time. `next_before_seq` is
+the cursor for the page *before* this one, and is null once the start is
+reached.
+
+---
+
+## Op 12 — Asking a question in an old dossier
+
+**Socket.IO: yes — and there is nothing new to say about it.**
+
+The handler does not know or care that this dossier is old. `open_conversation`
+finds the existing row instead of creating one; `context_for` returns a summary
+plus a tail rather than nothing; the title is already set so no `title` event is
+emitted. Every other line of the handler is the same.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant B as Browser
+  participant H as query handler
+  participant DB as Postgres
+  participant P as Pipeline
+
+  B->>H: query { session_id: an old dossier, title: its name }
+  H->>DB: open_conversation → the existing row
+  H->>DB: context_for → rolling summary + recent successful turns
+  H->>DB: record the question (meta.run = next run number)
+  H->>P: query_stream(question, scoped id, title, history)
+  Note over P: retrieval searches that dossier's own collection,<br/>which still holds every filing ever attached to it
+  P-->>H: run_started → status → route → tokens → done
+  H-->>B: forwarded, each stamped with session_id
+  H->>DB: record the answer
+```
+
+The filings are still there because a dossier's vector collection is keyed by
+`scoped_session_id(user_id, session_id)` and nothing deleted it. Dossiers
+outlive the process: on startup the backend prunes only collections whose
+dossier no longer exists.
+
+---
+
+## Op 13 — Switching dossier while a run is streaming
+
+**Socket.IO: nothing happens on the backend. The run continues.**
+
+The backend has no idea the analyst navigated away. It keeps emitting to the
+same `sid`, because that is where the question came from.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant B as Browser
+  participant H as query handler
+  participant DB as Postgres
+
+  B->>H: query { session_id: A }
+  H-->>B: token (session_id: A)
+  Note over B: analyst switches to dossier B
+  H-->>B: token (session_id: A)
+  H-->>B: token (session_id: A)
+  H-->>B: done (session_id: A)
+  H->>DB: the complete answer is recorded against dossier A
+  Note over B: the client can tell these belong to A<br/>because every event carries session_id
+```
+
+This is precisely why the handler stamps every payload:
+
+```python
+payload["session_id"] = session_id
+```
+
+The backend's contribution is to make each event **self-describing**, so a
+client that has moved on can tell a late answer from one meant for what is on
+screen now. What the client does with that is its own business — the answer is
+recorded in full either way, and reopening dossier A shows the finished run.
 
 ---
 
 ## Op 14 — Discarding a dossier
 
-**Trigger:** the wipe button in the dock → `discardDossier(state.active)`.
-**Channel:** REST — `DELETE /api/conversations/{id}`.
+**Socket.IO: not involved.** `DELETE /api/conversations/{id}`.
 
-**Frontend steps:**
+```python
+@router.delete("/{session_id}")
+async def delete_conversation(session_id, user, session, analysis, history):
+    """Discard a dossier: its messages, and the filings it could read.
 
-1. Refuse if `state.busy`.
-2. `deleteDossier(id)` — `authFetch` DELETE. **Errors are swallowed on
-   purpose**: the dossier is gone from the workbench either way, and a record
-   left behind on the backend reappears on the next sign-in rather than being
-   lost. That is the better way round to fail.
-3. Splice it out of `state.dossiers`.
-4. Open the neighbour — the next one, or the previous one if it was last.
-5. If none are left, `newDossier()`. The workbench always has one dossier open
-   rather than an empty stage.
-6. Toast *"Dossier discarded"*.
+    Both halves go, and in that order — a conversation whose messages were kept
+    while its filings were dropped would answer follow-ups out of a summary of
+    documents it can no longer cite.
+    """
+    deleted = await history.delete_conversation(session, user.id, session_id)
+    dropped = analysis.delete_session(scoped_session_id(user.id, session_id))
+    ...
+```
 
-Server-side this removes the messages **and** the vector collection its filings
-live in, so nothing it read can leak into the next dossier.
+```mermaid
+flowchart LR
+  D["DELETE /api/conversations/{id}"] --> M["messages + conversation row<br/>(cascade)"]
+  D --> V["the dossier's vector collection<br/>scoped_session_id(user, id)"]
+  M --> G["gone from the ledger"]
+  V --> G2["gone from the vector store"]
+```
+
+### The interesting case: discarding a dossier whose run is still streaming
+
+Nothing interrupts the run — the socket layer has no registry of runs to look
+in. The graph finishes, the answer is emitted, and then the recording step finds
+its conversation missing:
+
+```python
+conversation = await db.get(Conversation, conversation_pk)
+if conversation is None:  # deleted mid-run
+    return
+```
+
+It returns quietly. No error, no orphaned row, no exception surfaced to the
+analyst who deliberately threw that dossier away.
 
 ---
 
-## Op 15 — Signing out
+## Op 15 — The connection drops mid-run
 
-**Trigger:** the sign-out button on the dock.
-**Channel:** REST — `POST /api/auth/logout`, plus `socket.disconnect()`.
+**Socket.IO: yes — the `disconnect` handler, which does almost nothing.**
 
-The ordering here matters more than it looks.
+```python
+@sio.event
+async def disconnect(sid: str) -> None:
+    logger.info("Client disconnected: %s", sid)
+```
+
+That is the entire handler, and the brevity is the point: there is nothing to
+clean up. No rooms to leave, no per-connection resources to release beyond the
+session dict that python-socketio drops on its own.
+
+**The run keeps going.** It is an ordinary coroutine driving the graph; the
+disconnect does not cancel it. Emits aimed at a `sid` that is gone are dropped
+by the server without raising.
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant U as Analyst
-  participant App as app.js
-  participant A as auth.js
-  participant API as POST /api/auth/logout
-  participant S as socket
+  participant B as Browser
+  participant H as query handler
+  participant SIO as Socket.IO server
+  participant DB as Postgres
 
-  U->>App: click sign out
-  App->>App: refuse if state.busy ("wait for the run to finish")
-  App->>A: Auth.logout()
-  A->>A: capture refresh_token in a local
-  A-->>App: dispatch auth:signingout  (synchronous)
-  Note over App: any request the workbench still needs a good token for<br/>is on the wire before the token is cleared
-  A->>A: clear() — localStorage + refresh timer
-  A-->>App: dispatch auth:signedout
-  App->>App: endSession()
-  App->>S: socket.disconnect()
-  A->>API: { refresh_token }, keepalive: true
+  B->>H: query
+  H-->>B: token, token, token…
+  Note over B,SIO: the connection drops
+  SIO->>SIO: disconnect(sid) — logged, nothing to clean up
+  H-->>SIO: token (emit to a dead sid → dropped, no error)
+  H-->>SIO: done (dropped)
+  H->>DB: the complete answer is recorded
+  Note over DB: nothing is lost — reopening the dossier shows the finished run
 ```
 
-**Why `auth:signingout` exists:** listeners are called synchronously, so
-anything the workbench wants to send with a still-valid credential is already
-on the wire by the time `clear()` runs.
+Two consequences worth stating plainly:
 
-**Why the local half happens regardless of the request:** a logout that leaves
-the analyst signed in because the network was down is worse than one whose
-refresh token outlives its own expiry unrevoked. `keepalive: true` lets the
-revocation complete even if the page is being unloaded.
-
-**Frontend steps in `endSession`** ([`app.js:1143`](../frontend/app.js#L1143)):
-
-1. `socket.disconnect()`.
-2. Clear `state.dossiers` and `state.turn`; `setBusy(false)`.
-3. `messagesList.replaceChildren()` and re-show the welcome hero — the whole
-   stage, not just the connection, so the next analyst to sign in on this
-   browser is not handed the last one's questions.
-4. `stampUser(null)`, then `newDossier()` so the workbench is in a clean
-   starting state behind the gate.
-
-The gate goes back up on the same `auth:signedout` event, from its own listener
-in `auth.js`.
+1. **Nothing is lost server-side.** The answer the analyst stopped seeing is
+   written to the ledger in full and appears when they reopen the dossier.
+2. **The run is not resumable.** A reconnection is a **new `sid`** with no way
+   to reattach to a stream that was addressed to the old one. Recovery is not
+   "resume the run", it is "read the ledger" — which is why the ledger exists.
 
 ---
 
-## Op 16 — The token lifecycle underneath
+## Op 16 — Reconnecting
 
-Everything above depends on `Auth.accessToken` being current, because that one
-getter feeds both `authFetch` and the socket's `auth` callback.
+**Socket.IO: yes — a fresh `connect`, identical to
+[Op 4](#op-4--the-workbench-opens-the-handshake).**
+
+The backend cannot tell a reconnection from a first connection, and does not
+try. The token is verified again, a new `sid` is issued, and the identity is
+saved against it.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant B as Browser
+  participant H as connect handler
+  participant DB as Postgres
+
+  B->>H: handshake with whatever token is current now
+  alt the token is still valid
+    H->>DB: verify + load the user
+    H->>H: save_session(new sid, user_id)
+    H-->>B: connected
+  else the token expired while the socket was away
+    H-->>B: ConnectionRefusedError "This access token has expired."
+    Note over B: the client refreshes and handshakes again
+  end
+```
+
+Because the refusal message names the reason, a client can tell a credentials
+problem from an unreachable backend and respond differently — refresh and retry
+for the first, keep retrying for the second.
+
+Nothing is replayed on reconnect. There is no queue of missed events, and no
+attempt to catch a client up: the ledger is the record, and reading it is a REST
+call.
+
+---
+
+## Op 17 — Signing out
+
+**Socket.IO: the connection closes, which fires `disconnect`.**
+The revocation itself is HTTP: `POST /api/auth/logout`.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant B as Browser
+  participant API as POST /api/auth/logout
+  participant DB as Postgres
+  participant SIO as Socket.IO server
+
+  B->>SIO: close the connection
+  SIO->>SIO: disconnect(sid) — logged, session dict dropped
+  B->>API: refresh_token
+  API->>DB: mark that refresh token revoked
+  API-->>B: ok
+```
+
+An important limitation, and it is by design:
+
+> Revoking the refresh token does **not** kill an access token that is already
+> in flight. Access tokens are not looked up in the database — that is what
+> makes them cheap — so a signed-out session's access token stays usable until
+> its own short expiry.
+
+Practically: a socket already connected is not forcibly closed by signing out
+elsewhere, and a handshake attempted within that window would still be admitted.
+The window is the access token's lifetime, which is why it is short. If you need
+immediate revocation, the hook is `revoke_all`, plus a disconnect of that
+account's sockets — neither is wired in today.
+
+---
+
+## Op 18 — A second tab, or a second device
+
+**Socket.IO: yes — a second, entirely independent connection.**
 
 ```mermaid
 flowchart TD
-  L["login / signup / refresh returns a pair"] --> S["save(): localStorage + session"]
-  S --> T["scheduleRefresh(expires_in)"]
-  T --> D["setTimeout for<br/>expires_in − 60s, min 5s"]
-  D --> R["refresh()"]
-  R -- ok --> S
-  R -- fails --> O["signOutLocally('Your session expired')"]
-
-  F["authFetch(path)"] --> H["attach Bearer access_token"]
-  H --> Q{"401?"}
-  Q -- no --> RET["return the response"]
-  Q -- "yes, and retry allowed" --> R2["await refresh()"]
-  R2 -- ok --> RP["replay the request once, retry=false"]
-  R2 -- fails --> O
+  U["one analyst account"] --> T1["tab 1<br/>sid = abc"]
+  U --> T2["tab 2<br/>sid = xyz"]
+  T1 --> S1["socket session<br/>user_id, email"]
+  T2 --> S2["socket session<br/>user_id, email"]
+  S1 --> L["the same ledger and<br/>the same vector collections"]
+  S2 --> L
 ```
 
-Three properties worth stating outright:
+- Each tab handshakes separately and gets its own `sid` and its own saved
+  session.
+- Events go `to=sid`, so a run started in tab 1 streams **only** to tab 1. Tab 2
+  sees nothing live.
+- Both tabs share the durable state. A dossier created in one appears in the
+  other on its next `GET /api/conversations`; a filing attached in one is
+  searchable by a question asked in the other; a dossier discarded in one makes
+  the other's next read of it return 404.
+- Two questions asked at the same moment in the same dossier are two independent
+  runs. Each gets its own `run_id` and its own graph thread id, so they never
+  share state:
 
-1. **Proactive refresh.** The timer fires 60 s before expiry (never sooner than
-   5 s from now), so a request rarely meets a 401 in the first place.
-2. **Reactive refresh, capped at one retry.** If a freshly minted token is
-   still refused, the problem is not staleness and retrying would only spin.
-3. **Single-flight.** `refreshing` holds the promise of the rotation already
-   under way, so three requests hitting an expired token spend the refresh
-   token **once**. Refresh tokens rotate on use, so two concurrent rotations
-   would invalidate each other and sign the analyst out.
+```python
+# A fresh thread id per run, so concurrent runs never share state.
+config = {"configurable": {"thread_id": run_id}}
+```
 
-The socket benefits from all three without knowing about any of them: by the
-time its `auth` callback is invoked on a reconnection, `Auth.accessToken` is
-whatever the most recent rotation produced.
-
----
-
-# Reference
-
-## 6. The event contract
-
-### Outbound — browser → server
-
-| Event | When | Payload |
-| --- | --- | --- |
-| `query` | `submitQuery`, after any uploads | `{ query, session_id, title, files[] }` |
-
-That is the whole outbound surface. No acknowledgement callbacks are used, and
-the client never emits anything else — uploads, history and deletion all go
-over REST.
-
-### Inbound — server → browser
-
-Every payload carries `session_id` (the client's own id), added by the handler
-before emit.
-
-| Event | Payload | Frontend effect | Handler |
-| --- | --- | --- | --- |
-| `run_started` | `run_id` | `turn.runId = run_id` | [L199](../frontend/app.js#L199) |
-| `status` | `stage`, `category?` | progress line on the run | [L205](../frontend/app.js#L205) |
-| `route` | `category` | category badge | [L216](../frontend/app.js#L216) |
-| `title` | `title` | names the dossier in the dock and the stamp | [L223](../frontend/app.js#L223) |
-| `token` | `content` | append → `marked.parse` → soft scroll | [L241](../frontend/app.js#L241) |
-| `done` | `run_id`, `category`, `title` | close the run, release the busy lock | [L255](../frontend/app.js#L255) |
-| `error` | `message` | fault line on the run + toast, release the lock | [L275](../frontend/app.js#L275) |
-| `connect` | — | "Reconnected" toast if it had been offline | [L141](../frontend/app.js#L141) |
-| `disconnect` | — | interrupt a live run | [L146](../frontend/app.js#L146) |
-| `connect_error` | `error.message` | refresh-and-retry, or "retrying…" | [L162](../frontend/app.js#L162) |
-
-Events are emitted `to=sid` — to one socket, not to a room. The client's own
-`liveTurn` filter is a second line of defence, for events that are legitimately
-addressed to this browser but no longer to what is on its screen.
-
-### REST endpoints the frontend calls
-
-| Method + path | Called from | Purpose |
-| --- | --- | --- |
-| `POST /api/auth/signup` | gate | create an account, get a pair |
-| `POST /api/auth/login` | gate | get a pair |
-| `POST /api/auth/refresh` | `boot`, timer, `authFetch` | rotate the pair |
-| `POST /api/auth/logout` | `Auth.logout` | revoke the refresh token |
-| `POST /api/upload` | `uploadPending` | ingest a filing into a dossier |
-| `GET /api/conversations` | `loadDossiers` | redraw the dock on sign-in |
-| `GET /api/conversations/{id}/messages` | `hydrateDossier` | one page of the ledger |
-| `DELETE /api/conversations/{id}` | `deleteDossier` | discard a dossier and its filings |
+Their messages are appended to the same conversation in whatever order they
+finish. Nothing serialises them server-side.
 
 ---
 
-## 7. Client state shapes
+# Part 3 — Reference
+
+## 5. Where each event is born
+
+Events are produced at three different depths and all leave through one loop:
 
 ```mermaid
-classDiagram
-  class state {
-    dossiers[] : every dossier this account has
-    active : the one on the stage
-    busy : a run is on the wire
-    turn : the run currently streaming, or null
-  }
-  class Dossier {
-    id : client-minted uuid, hex
-    title : name given by the analyzer
-    runNo : highest run number so far
-    pending[] : filings staged in the command bar
-    indexed[] : filings ingested into this dossier
-    stack : detached DOM element holding its runs
-    loaded : stack matches the backend
-    earlier : cursor for the previous page, or null
-    loading : a hydrate is in flight
-  }
-  class Turn {
-    root, out, badge, work, workText, body : DOM handles
-    raw : accumulated markdown
-    runId : from run_started
-    sessionId : the dossier this run belongs to, for its life
-    category : once known
-  }
-  state --> Dossier : dossiers[], active
-  state --> Turn : turn
-  Dossier --> Turn : createRun appends into stack
+flowchart TD
+  subgraph n["graph nodes — analysis/graph/nodes.py"]
+    N1["_emit('status', stage=...)"]
+    N2["_emit('title', title=...)"]
+    N3["_emit('route', category=...)"]
+    N4["_emit('token', ...) — the no_filing node only"]
+  end
+  subgraph p["pipeline — analysis/pipeline.py"]
+    P1["yield run_started — before the graph starts"]
+    P2["yield token — from the 'messages' stream mode"]
+    P3["yield done — after the graph finishes"]
+  end
+  subgraph h["handler — api/socket.py"]
+    H1["error — refusals and exceptions"]
+    H2["the forwarding loop:<br/>pop 'event', stamp session_id, emit to=sid"]
+  end
+  n -- "custom stream mode" --> p
+  p --> H2
+  H1 --> out["the browser"]
+  H2 --> out
 ```
 
-Three invariants hold the design together:
+The node-level helper is three lines:
 
-1. **`turn.sessionId` is immutable.** Set at `createRun`, read by `liveTurn`,
-   `uploadPending` and `markRunFile`. Nothing reassigns it.
-2. **Each dossier owns its DOM.** `dossier.stack` is a detached element, moved
-   into `messagesList` on open. Ledger entries are never rebuilt from client
-   state, so nothing about a past run can be lost by a re-render.
-3. **`state.turn` is a single slot.** Concurrency is prevented on the client by
-   the busy lock, not by the server — the backend would happily run two.
+```python
+def _emit(event: str, **payload: Any) -> None:
+    """Write an event onto the graph's custom stream, for the UI to pick up."""
+    get_stream_writer()({"event": event, **payload})
+```
 
----
-
-## 8. The busy lock
-
-`setBusy(true)` ([`app.js:566`](../frontend/app.js#L566)) is set on emit and
-cleared by `finishTurn()`, which runs on `done`, on `error`, on `disconnect`
-mid-run, and on an upload that failed.
-
-| Action | While `state.busy` |
-| --- | --- |
-| Send / press Enter | button and textarea disabled; `submitQuery` returns immediately |
-| Attach a filing | attach button disabled; `stageFiles` toasts *"Wait for the run to finish before attaching a filing"* |
-| Drag a file onto the window | the drop veil never appears |
-| Switch dossier | toast *"Wait for the run to finish before switching dossier"* |
-| New dossier | returns silently |
-| Discard dossier | returns silently |
-| Sign out | toast *"Wait for the run to finish before signing out"* |
-
-`body.is-busy` is toggled alongside, for the stylesheet.
+A node writes a plain dict onto LangGraph's custom stream; the pipeline yields
+it through untouched; the handler stamps it and emits it. **No node knows a
+socket exists**, which is what lets the same pipeline be driven by a test, a
+script or a different transport.
 
 ---
 
-## 9. Failure matrix
+## 6. Why every event carries `session_id`
 
-| What goes wrong | Where it is caught | What the analyst sees | Is anything lost? |
+One line in the forwarding loop:
+
+```python
+payload["session_id"] = session_id
+```
+
+Three reasons, all on the server's side of the argument:
+
+1. **A late event must be identifiable.** An answer can take a minute. By the
+   time it lands the analyst may be looking at another dossier, and an event
+   that does not say what it belongs to can only be guessed at.
+2. **The id sent back is the client's own.** Not
+   `scoped_session_id(user_id, session_id)`. How a dossier is namespaced under
+   an account is a backend detail, and leaking it would tell every browser what
+   the internal user id is.
+3. **It costs nothing.** One string per event, on a payload that already exists.
+
+---
+
+## 7. Two database sessions per run, on purpose
+
+A run touches the database twice, in two separate short-lived sessions, with the
+whole graph run in between them:
+
+```mermaid
+flowchart LR
+  A["session 1 — before the graph<br/>open_conversation<br/>context_for<br/>record the question"] --> B["session CLOSED"]
+  B --> C["the graph runs<br/>seconds to a minute or more<br/>no database connection held"]
+  C --> D["session 2 — after the stream<br/>record the answer<br/>set the title if it changed"]
+```
+
+> An answer can take a minute, and a pooled connection held open across it is a
+> connection nothing else can use.
+
+Holding one session across the whole run would be simpler to write and would
+quietly cap the number of concurrent analysts at the size of the connection
+pool.
+
+---
+
+## 8. Every way the backend refuses or fails
+
+| Situation | Where | What the backend does | What reaches the browser |
 | --- | --- | --- | --- |
-| No token at handshake | backend `connect` | gate is already up | no |
-| Expired token at handshake | `connect_error` | nothing — refreshed and reconnected silently | no |
-| Refresh token dead | `Auth.refresh` rejects | gate returns, *"Your session expired"* | no |
-| Backend unreachable | `connect_error` | *"Can't reach the analyzer — retrying…"*, once | no |
-| `GET /api/conversations` fails | `startSession` | toast, workbench opens with one empty dossier | no — dossiers are still on the server |
-| Hydration fails | `hydrateDossier` | toast; the dossier opens empty but is usable | no — new runs append to the stored ledger |
-| Hydration 404s | `hydrateDossier` | nothing; treated as loaded | no — it was discarded elsewhere |
-| Upload rejected | `uploadPending` | chip `failed`, fault on the run, toast; **no query is emitted** | the filing is not indexed; the question is not asked |
-| Ledger cannot be opened | backend, `error` event | fault line + toast | the question is not run |
-| Exception mid-stream | backend, `error` event | fault line + toast; partial answer stays | no — the failed turn is recorded, marked `error` |
-| Connection drops mid-run | `disconnect` | *"Connection lost — the run was interrupted"* | not server-side: the answer is still recorded and appears on reopen |
-| `marked` failed to load | `token` / `fillStoredAnswer` | plain escaped text instead of rendered markdown | no |
-| `localStorage` unwritable | `save()` | nothing; the session works for this tab only | it will not survive a reload |
+| Handshake with no token | `connect` | log, refuse | `connect_error` — "Not signed in." |
+| Handshake with an expired or invalid token | `connect` | log, refuse | `connect_error` with the reason |
+| Handshake with a refresh token by mistake | `decode_token` | refuse | "That is not an access token." |
+| Account deleted or deactivated | `user_from_access_token` | refuse | "This account is no longer active." |
+| `query` with no socket session | `query` | emit `error`, return | `error` — "Your session expired" |
+| `query` with a blank `session_id` | `query` | log a warning, emit `error`, return | `error` — "This chat has no id" |
+| Ledger cannot be opened | `query` | log the exception, emit `error`, return — **the graph never runs** | `error` |
+| Exception mid-stream | `query` | log, emit `error`, **then still record the failed turn** | `error` + whatever streamed |
+| Dossier deleted mid-run | `_record_answer` | return quietly | nothing |
+| Recording the answer fails | `_record_answer` | log the exception, swallow it | nothing — the answer was already delivered |
+| Summarisation fails | `schedule_summary` | logged by the task's done-callback | nothing |
+
+The pattern: **anything that happens before the answer is delivered becomes an
+`error` event; anything that happens after it is logged and swallowed.** Once
+the analyst has read the answer, a bookkeeping failure is not theirs to act on.
 
 ---
 
-## 10. Adding a new event
+## 9. What the backend deliberately does not do
 
-Server → client, end to end:
-
-1. **Emit it** from the graph node via `_emit("my_event", …)`
-   ([`nodes.py`](../backend/Analyzer/analysis/graph/nodes.py)), or yield it from
-   `query_stream` ([`pipeline.py`](../backend/Analyzer/analysis/pipeline.py)).
-   Custom-stream events flow through untouched.
-2. **Check the forwarding loop** in
-   [`api/socket.py`](../backend/Analyzer/api/socket.py#L77) — it pops `event`,
-   stamps `session_id`, and emits. If the event carries something worth writing
-   to the ledger, capture it there alongside `token` / `route` / `done`.
-3. **Handle it** in `app.js` next to the others, and **start with
-   `liveTurn(data)`**. An event that writes to the run and skips the guard will
-   eventually write into the wrong dossier.
-4. **Decide whether it survives staleness.** `title` and the name half of `done`
-   are handled *before* the guard precisely because they belong to a dossier,
-   not to a run on screen. Most events should not do this.
-5. **Add it to the table in [§6](#6-the-event-contract)** and to the
-   equivalent table in [SOCKETIO.md](SOCKETIO.md#the-event-contract).
-
-Client → server is rarer, and the question to ask first is whether it belongs on
-the socket at all: one request with one response is a REST route, and gets
-`authFetch`'s token handling and retry for free.
-
----
-
-## 11. Debugging from the browser
-
-**Turn on the client's own logging** — it prints every packet, the transport in
-use, and each reconnection attempt:
-
-```js
-localStorage.debug = "socket.io-client:*,engine.io-client:*";
-// then reload; localStorage.debug = "" to stop
-```
-
-**Inspect live state** — everything is on the module scope of a plain script,
-so the console can read it directly:
-
-```js
-socket.connected            // is the connection up?
-socket.io.engine.transport.name   // "websocket" or "polling"
-state.busy                  // is a run on the wire?
-state.turn?.sessionId       // which dossier that run belongs to
-state.active.id             // which dossier is on screen
-state.dossiers.map((d) => [d.id.slice(0, 6), d.title, d.runNo, d.loaded])
-Auth.isSignedIn             // is there an access token?
-JSON.parse(localStorage["cfa.session"]).user
-```
-
-**Watch every inbound event** without editing the file:
-
-```js
-socket.onAny((event, data) => console.log("⟵", event, data));
-```
-
-**Common symptoms:**
-
-| Symptom | Look at |
+| Not implemented | Why |
 | --- | --- |
-| Answer arrives in bursts, not smoothly | transport fell back to `polling` — check the nginx `Upgrade`/`Connection` headers and `proxy_buffering off` |
-| `connect_error` loops with no toast repeat | expected; `offline` suppresses repeats. Check the Network tab for the handshake's status |
-| Handshake 401s forever | the access token is stale in a way refresh cannot fix — check `Auth.isSignedIn` and the `/api/auth/refresh` response |
-| Events arrive but nothing renders | `liveTurn` is dropping them: compare `state.turn?.sessionId`, `state.active.id`, and the event's `session_id` |
-| The composer stays locked | `finishTurn()` never ran — no `done`, no `error`, no `disconnect`. Check the backend log for the run id from `run_started` |
-| The dossier never gets a name | the `title` event only fires for a dossier whose `title` was blank at emit time |
-| Answer stops mid-sentence, no error | the connection dropped — reopen the dossier; the full answer is in the ledger |
+| **Rooms** | Every emit is `to=sid`. Rooms would matter for broadcasting to several viewers of one dossier; nothing here does that. |
+| **Acknowledgement callbacks** | The client never needs a per-event receipt — `done` and `error` are the receipts. |
+| **A cancel event** | There is no run registry to look a run up in. A cancelled run's answer would still be worth recording, so cancelling would save nothing but tokens. |
+| **Resuming an interrupted run** | A reconnection is a new `sid`. Recovery is a read of the ledger. |
+| **Server-side queuing of a busy client** | Nothing stops two runs at once; each gets its own `run_id` and thread id. Serialising is the client's choice, not a backend rule. |
+| **Pushing dossier changes to other tabs** | No live invalidation. Other tabs pick up changes on their next REST read. |
+| **Uploads over the socket** | Large binaries belong on HTTP, where nginx limits and timeouts already apply. |
+| **Sticky-session-free scaling** | With more than one worker, Socket.IO needs a message queue and sticky routing — see [SOCKETIO.md](SOCKETIO.md). |
+
+---
+
+## 10. Reading the log
+
+The Socket.IO layer narrates itself. One complete question, from sign-in to
+recorded answer, looks like this:
+
+```
+INFO  api.socket            Client connected: kJ8xw2… (user=analyst@firm.com)
+INFO  analysis.routes       Uploaded acme-10k.pdf -> 214 chunks (user=6f1c…)
+INFO  api.socket            Query from kJ8xw2… (chat=a91f3c…): 'List and categorize all Item 1A risk factors'
+INFO  conversations.service Opened conversation 0d2b… (user=6f1c…)
+INFO  analysis.pipeline     Run 7c44… started: 'List and categorize…' (session=6f1c…:a91f3c…, history=0 msg/~0 tokens)
+INFO  analysis.graph.nodes  Running Risks analysis
+INFO  analysis.pipeline     Run 7c44… finished (category=risks)
+INFO  api.socket            Client disconnected: kJ8xw2…
+```
+
+What each line tells you:
+
+| Line | Confirms |
+| --- | --- |
+| `Client connected: <sid> (user=…)` | the handshake was admitted and identity is on the socket |
+| `Handshake from <sid> refused — …` | the token was missing or bad — the reason is on the line |
+| `Uploaded <file> -> N chunks` | the filing is in the dossier's collection and searchable |
+| `Query from <sid> (chat=…)` | the event arrived and passed both guards |
+| `Opened conversation <id>` | this was the dossier's **first** write — the row was just created |
+| `Run <id> started: … (session=…, history=N msg/~T tokens)` | how much context the model was actually given |
+| `No filing in this chat` | retrieval was empty — the `no_filing` node answered instead |
+| `Running <Category> analysis` | which node the router dispatched to |
+| `Run <id> finished (category=…)` | the graph completed and `done` was emitted |
+| `Query from <sid> failed` | an exception mid-stream — an `error` event went out, and the failed turn was still recorded |
+| `Could not record the answer for conversation <id>` | the answer reached the analyst but not the ledger |
+| `Client disconnected: <sid>` | the socket closed — nothing was cleaned up because nothing needed to be |
+
+The `run_id` in the log is the same one sent to the browser as `run_started`, so
+a run an analyst is looking at can always be matched to its lines here.

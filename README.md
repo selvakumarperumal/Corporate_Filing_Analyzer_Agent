@@ -15,11 +15,10 @@ covers Socket.IO from first principles through to production — what it is, how
 it is mounted onto FastAPI, how the connection is authenticated, and what nginx
 has to be told for a token stream to arrive smoothly.
 
-The browser's side of that wire is documented in
-**[docs/FRONTEND-SOCKETIO.md](docs/FRONTEND-SOCKETIO.md)**: the socket the
-workbench opens, the one event it sends, the seven it listens for, and — for
-every operation, from cold page load to sign-out — exactly what the frontend
-does.
+And for a walk through the backend's real-time layer one operation at a time —
+what the server actually does when the analyst clicks "New dossier", asks a
+question, reopens an old dossier or signs out, with the Socket.IO handlers shown
+in full — see **[docs/FRONTEND-SOCKETIO.md](docs/FRONTEND-SOCKETIO.md)**.
 
 ---
 
@@ -117,7 +116,7 @@ Corporate_Filing_Analyzer_Agent/
 ├── docs/
 │   ├── HOW-IT-WORKS.md         # Walkthrough of every flow, from sign-in to summarisation
 │   ├── SOCKETIO.md             # Socket.IO from zero to production: ideas, this app, deployment
-│   └── FRONTEND-SOCKETIO.md    # The browser's side: every client operation, event by event
+│   └── FRONTEND-SOCKETIO.md    # What the backend does for each workbench operation, handler by handler
 ├── deploy/
 │   └── cnpg-cluster.yaml       # The same database as a CloudNativePG Cluster (Kubernetes)
 ├── backend/

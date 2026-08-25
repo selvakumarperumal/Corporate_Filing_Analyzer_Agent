@@ -6,8 +6,9 @@ attaching filings, asking questions, deleting dossiers, and managing sessions.
 
 This is the *architecture and behavior* document. Setup, configuration values, and the general
 reference live in the [README](../README.md); the real-time transport — how Socket.IO is mounted
-onto FastAPI and how events are streamed — is in [SOCKETIO.md](SOCKETIO.md), and the browser's own
-side of it, operation by operation, is in [FRONTEND-SOCKETIO.md](FRONTEND-SOCKETIO.md).
+onto FastAPI and how events are streamed — is in [SOCKETIO.md](SOCKETIO.md), and what the backend
+does for each workbench operation, handler by handler, is in
+[FRONTEND-SOCKETIO.md](FRONTEND-SOCKETIO.md).
 
 ---
 

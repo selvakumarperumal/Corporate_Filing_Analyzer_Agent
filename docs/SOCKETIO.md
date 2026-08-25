@@ -707,8 +707,8 @@ exhaust a connection pool under mild load. Open late, close early.
 ## The client side
 
 The receiving half, from [frontend/app.js](../frontend/app.js). What follows is
-the socket code alone; for the client operation each event belongs to — staging
-a filing, hydrating a dossier, switching mid-run — see
+the socket code alone; for what the **backend** does behind each thing the
+analyst does — new dossier, attach, ask, reopen, discard, sign out — see
 [FRONTEND-SOCKETIO.md](FRONTEND-SOCKETIO.md).
 
 ```js
