@@ -25,6 +25,10 @@ what the server actually does when the analyst clicks "New dossier", asks a
 question, reopens an old dossier or signs out, with the Socket.IO handlers shown
 in full — see **[docs/FRONTEND-SOCKETIO.md](docs/FRONTEND-SOCKETIO.md)**.
 
+Planning to run more than one instance? **[docs/SCALING.md](docs/SCALING.md)**
+lists what breaks and in what order — the JWT secret, the embedded vector store,
+sticky sessions, graceful shutdown — with EKS manifests for each.
+
 The database has its own guide too:
 **[docs/DB-OPERATIONS.md](docs/DB-OPERATIONS.md)** covers the schema and every
 read and write the app makes — what each question stores, how history is read
@@ -128,7 +132,8 @@ Corporate_Filing_Analyzer_Agent/
 │   ├── HOW-IT-WORKS.md         # Walkthrough of every flow, from sign-in to summarisation
 │   ├── SOCKETIO.md             # Socket.IO from zero to production: ideas, this app, deployment
 │   ├── FRONTEND-SOCKETIO.md    # What the backend does for each workbench operation, handler by handler
-│   └── DB-OPERATIONS.md        # The schema, and every database read and write the app makes
+│   ├── DB-OPERATIONS.md        # The schema, and every database read and write the app makes
+│   └── SCALING.md              # Running more than one instance: what breaks, and the fix for each
 ├── deploy/
 │   └── cnpg-cluster.yaml       # The same database as a CloudNativePG Cluster (Kubernetes)
 ├── backend/

@@ -984,6 +984,11 @@ is Ollama, not the socket layer — every worker would queue on the same model.
 Scale the model host before the API. When you do scale the API: Redis manager
 plus sticky sessions, both.
 
+**The full version.** [SCALING.md](SCALING.md) works through every instance of
+this on real infrastructure — including the two things that break *before* the
+socket layer does (the JWT secret and the embedded vector store), sticky-session
+annotations for EKS, and graceful shutdown for minute-long answers.
+
 ---
 
 ## Rooms, and what you would use them for here
