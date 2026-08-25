@@ -3,8 +3,8 @@
 # Corporate Filing Analyzer — API image (FastAPI + Socket.IO under uvicorn).
 #
 # The build context is `backend/`, not the repo root, because the app resolves
-# its prompts, logs and data directories relative to it: every path in the code
-# is `Path(__file__).resolve().parents[2]`, which is this directory. Keeping the
+# its prompts, logs and data directories relative to it — see
+# `Analyzer/core/paths.py`, which walks up to this directory. Keeping the
 # `Analyzer/` + `config/` layout intact inside the image is what makes those
 # paths land in the right place without a single code change.
 

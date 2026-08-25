@@ -1,6 +1,6 @@
 # Corporate Filing Analyzer Agent (CFA Agent)
 
-AI-powered corporate filing analysis assistant built with **LangGraph**, **FastAPI**, **Socket.IO**, **LangChain Ollama** (`llama3.1:latest` & `nomic-embed-text:latest`), **ChromaDB**, **SQLModel** (async) for accounts and conversation history, an optional **Redis** read cache, and a modern web frontend.
+AI-powered corporate filing analysis assistant built with **LangGraph**, **FastAPI**, **Socket.IO**, **LangChain Ollama** (`llama3.1:latest` & `nomic-embed-text:latest`), **ChromaDB**, **SQLModel** (async) over **Postgres** for accounts and conversation history, an optional **Redis** read cache, and a modern web frontend.
 
 Dossiers persist. Every question and answer is a row, every filing stays in its
 dossier's collection, and signing in resumes the work rather than starting it
@@ -14,6 +14,12 @@ The real-time layer has a guide of its own: **[docs/SOCKETIO.md](docs/SOCKETIO.m
 covers Socket.IO from first principles through to production — what it is, how
 it is mounted onto FastAPI, how the connection is authenticated, and what nginx
 has to be told for a token stream to arrive smoothly.
+
+The browser's side of that wire is documented in
+**[docs/FRONTEND-SOCKETIO.md](docs/FRONTEND-SOCKETIO.md)**: the socket the
+workbench opens, the one event it sends, the seven it listens for, and — for
+every operation, from cold page load to sign-out — exactly what the frontend
+does.
 
 ---
 
@@ -35,7 +41,7 @@ has to be told for a token stream to arrive smoothly.
                        │  └──────────┬───────────┘  │      │                │
                        │  ┌──────────▼───────────┐  │      │  conversations │
                        │  │   history service    │──┼─────►│    messages    │
-                       │  │ ledger ┆ run context │  │      │      (DB)      │
+                       │  │ ledger ┆ run context │  │      │   (Postgres)   │
                        │  └──────────┬───────────┘  │      └───────┬────────┘
                        └─────────────┼──────────────┘              │ hot tail
                                      │ user id                     ▼
@@ -45,9 +51,9 @@ has to be told for a token stream to arrive smoothly.
                        └────────────────────────────┘      └────────────────┘
 ```
 
-The database is the source of truth for everything that has been said. Redis, if
-it is configured at all, holds a copy of each conversation's recent tail — lose
-it and the only difference is that reads go to the database instead.
+Postgres is the source of truth for everything that has been said. Redis, if it
+is configured at all, holds a copy of each conversation's recent tail — lose it
+and the only difference is that reads go to Postgres instead.
 
 ### The graph
 
@@ -97,7 +103,7 @@ kept in the message table rather than in graph state: the ledger has to be
 paged, rendered and read back by a browser that has been closed since, none of
 which a checkpoint blob does well. `HistoryService` assembles the slice a run
 needs and passes it in as `summary` + `history` on `FilingState`. Add a
-checkpointer in [`graph/builder.py`](backend/Analyzer/graph/builder.py) if you
+checkpointer in [`analysis/graph/builder.py`](backend/Analyzer/analysis/graph/builder.py) if you
 reintroduce a human-in-the-loop interrupt.
 
 ---
@@ -110,7 +116,8 @@ Corporate_Filing_Analyzer_Agent/
 ├── .env.example                # Settings compose reads; copy to .env
 ├── docs/
 │   ├── HOW-IT-WORKS.md         # Walkthrough of every flow, from sign-in to summarisation
-│   └── SOCKETIO.md             # Socket.IO from zero to production: ideas, this app, deployment
+│   ├── SOCKETIO.md             # Socket.IO from zero to production: ideas, this app, deployment
+│   └── FRONTEND-SOCKETIO.md    # The browser's side: every client operation, event by event
 ├── deploy/
 │   └── cnpg-cluster.yaml       # The same database as a CloudNativePG Cluster (Kubernetes)
 ├── backend/
@@ -121,35 +128,43 @@ Corporate_Filing_Analyzer_Agent/
 │   │   └── prompts.yaml        # One system prompt per category
 │   ├── logs/                   # analyzer.log + errors.log (created at startup)
 │   ├── data/
-│   │   ├── app.db              # Accounts + message history (SQLite by default)
 │   │   └── chroma_db/          # One vector collection per dossier, kept across restarts
 │   └── Analyzer/
 │       ├── .env.example        # Every setting, with what it is for
-│       ├── core/               # Config, DB engine, cache, crypto, logging
+│       ├── main.py             # FastAPI + Socket.IO entry point — assembly only
+│       ├── container.py        # The process-wide services, wired together once
+│       ├── core/               # Cross-cutting basics. Imports nobody.
 │       │   ├── config.py       #   Settings, read from env / .env
-│       │   ├── database.py     #   Async engine, session factory, init_db()
+│       │   ├── paths.py        #   Every runtime path, resolved in one place
+│       │   ├── logging.py      #   Loads logging.yaml
+│       │   └── tokens.py       #   Token estimate stored with every message
+│       ├── db/                 # Persistence plumbing. No tables of its own.
+│       │   ├── engine.py       #   Async Postgres engine, session factory, init_db()
+│       │   └── columns.py      #   Shared id / timestamp column helpers
+│       ├── auth/               # Domain: who is asking
+│       │   ├── models.py       #   UserBase → User, RefreshToken (table=True)
+│       │   ├── schemas.py      #   Signup / login / refresh / token pair bodies
+│       │   ├── security.py     #   bcrypt hashing, access/refresh token minting
+│       │   ├── service.py      #   Signup, login, refresh rotation, logout
+│       │   └── routes.py       #   /api/auth/*
+│       ├── conversations/      # Domain: dossiers and everything said in them
+│       │   ├── models.py       #   Conversation, Message (jsonb metadata)
+│       │   ├── schemas.py      #   Dossier + message page bodies
 │       │   ├── cache.py        #   Optional Redis tail cache (off without REDIS_URL)
-│       │   ├── tokens.py       #   Token estimate stored with every message
-│       │   └── security.py     #   bcrypt hashing, access/refresh token minting
-│       ├── models/             # SQLModel — one class is both table and schema
-│       │   ├── user.py         #   UserBase → User, RefreshToken (table=True)
-│       │   ├── conversation.py #   Conversation, Message (jsonb metadata)
-│       │   ├── columns.py      #   Shared id / timestamp column helpers
-│       │   └── schemas.py      #   Request + response bodies
-│       ├── prompts/            # Loads prompts.yaml into ChatPromptTemplates
-│       ├── graph/              # LangGraph workflow
-│       │   ├── state.py        #   FilingState
-│       │   ├── nodes.py        #   retrieve / router / analysis
-│       │   └── builder.py      #   conditional edges
-│       ├── services/           # LLM, Vector, Router, Analysis, Chat, Auth
-│       │   ├── history_service.py  # The ledger, and the slice a run is sent
-│       │   └── summary_service.py  # Folds old turns into a rolling summary
-│       ├── api/                # Routes, dependencies, Socket.IO handlers
-│       │   ├── auth_routes.py  #   /api/auth/*
-│       │   ├── chat_routes.py  #   /api/upload, /api/conversations/*
-│       │   ├── deps.py         #   current_user, DB session, app singletons
-│       │   └── socket_handler.py
-│       └── main.py             # FastAPI + Socket.IO entry point
+│       │   ├── service.py      #   The ledger, and the slice a run is sent
+│       │   └── routes.py       #   /api/conversations/*
+│       ├── analysis/           # Domain: reading filings and answering about them
+│       │   ├── categories.py   #   The eight categories, named once
+│       │   ├── prompts.py      #   Loads prompts.yaml into ChatPromptTemplates
+│       │   ├── pipeline.py     #   AnalysisPipeline — the object everything talks to
+│       │   ├── routes.py       #   /api/upload
+│       │   ├── llm/            #   client / routing / analyst / summarizer
+│       │   ├── retrieval/      #   vector_store.py — one collection per dossier
+│       │   └── graph/          #   state.py, nodes.py, builder.py
+│       └── api/                # Transport only. No rules of its own.
+│           ├── dependencies.py #   current_user, DB session, service providers
+│           ├── routes.py       #   Assembles the domain routers + /api/health
+│           └── socket.py       #   connect / disconnect / query
 └── frontend/                   # Standalone Web Client
     ├── Dockerfile              # nginx (unprivileged) serving static + proxying the API
     ├── nginx.conf              # /api + /socket.io -> backend, upload limit, ws upgrade
@@ -204,9 +219,10 @@ All settings are read from the environment or `backend/Analyzer/.env`; see
 | `OLLAMA_MODEL` | `llama3.1:latest` | Analysis + routing model |
 | `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text:latest` | Embeddings for retrieval |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Where Ollama is listening |
-| `DATABASE_URL` | `sqlite+aiosqlite:///…/data/app.db` | **Any async SQLAlchemy URL** (SQLModel uses the same URLs) — the one switch between local SQLite and a real server |
+| `DATABASE_URL` | `postgresql+asyncpg://analyzer:analyzer@localhost:5432/filing_analyzer` | **Async Postgres URL.** Anything else is refused at startup |
 | `DB_ECHO` | `false` | Log every SQL statement (debugging) |
-| `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | `5` / `10` | Connection pool; ignored by SQLite |
+| `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | `5` / `10` | Connection pool, per API process |
+| `DB_POOL_RECYCLE_SECONDS` | `1800` | Replace connections older than this rather than reuse them |
 | `HISTORY_CONTEXT_MESSAGES` | `10` | Recent turns carried into a run |
 | `HISTORY_CONTEXT_TOKENS` | `1500` | Ceiling on what those turns may cost |
 | `HISTORY_SUMMARY_THRESHOLD` | `24` | Unsummarised turns tolerated before older ones are folded |
@@ -221,8 +237,7 @@ All settings are read from the environment or `backend/Analyzer/.env`; see
 | `REFRESH_TOKEN_EXPIRE_DAYS` | `14` | Refresh token lifetime |
 | `CORS_ORIGINS` | `["*"]` | Allowed browser origins, comma-separated (`http://a,http://b`) or a JSON list |
 
-Moving off SQLite is one line — `asyncpg` ships in the lockfile, so it is only
-the URL that changes:
+### Postgres, and only Postgres
 
 ```bash
 # .env
@@ -230,8 +245,17 @@ DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/filing_analyzer
 ```
 
 Note the `+asyncpg`. Every query in the app is awaited, so a bare
-`postgresql://` URL selects the synchronous driver and fails at startup. The
-Docker stack sets this for you.
+`postgresql://` URL selects the synchronous driver — which is why the setting
+is validated at startup and refused there, rather than raising on the first
+request. `docker compose up` sets the URL for you from the `POSTGRES_*` values
+in the root `.env`; `deploy/cnpg-cluster.yaml` is the same database as a
+CloudNativePG `Cluster` for Kubernetes.
+
+The schema leans on the server: message metadata is `jsonb`, timestamps are
+`timestamptz`, and the `ON DELETE CASCADE` on `refresh_tokens.user_id` and
+`messages.conversation_id` is enforced by Postgres without being asked. There
+is no embedded-database fallback, and nothing in the code branches on which
+store it is talking to.
 
 Every query is async end to end — `sqlmodel.ext.asyncio.session.AsyncSession`
 over an async engine, so the database never blocks the event loop the token
@@ -270,11 +294,9 @@ unused relationship is a liability under async, where reading an unloaded one
 raises `MissingGreenlet` from wherever it was touched. The foreign key carries
 `ON DELETE CASCADE` instead.
 
-> **SQLite ignores foreign keys unless asked not to**, and the pragma is
-> per-connection rather than a property of the file — so `core/database.py`
-> turns it on for every SQLite connection. Without that the cascade is
-> decorative: deleting an account leaves its tokens behind as orphans. Every
-> other backend enforces constraints without being asked.
+> Deleting an account therefore takes its refresh tokens, its dossiers and
+> every message in them with it, in one statement, decided by Postgres rather
+> than by application code that could be skipped.
 
 ---
 
@@ -323,7 +345,7 @@ claiming the same position.
 | Where | `GET /api/conversations/{id}/messages` | `HistoryService.context_for()` |
 
 Keeping them apart is the point of
-[`services/history_service.py`](backend/Analyzer/services/history_service.py).
+[`conversations/service.py`](backend/Analyzer/conversations/service.py).
 The record of what was asked and answered should not change shape as a dossier
 gets long; the prompt has no choice but to. Four passes narrow the second one:
 
@@ -346,7 +368,7 @@ answers while one trimmed too softly overflows and fails.
 
 Past `HISTORY_SUMMARY_THRESHOLD` unsummarised turns, everything but the recent
 tail is folded into `conversations.summary` by
-[`services/summary_service.py`](backend/Analyzer/services/summary_service.py) —
+[`analysis/llm/summarizer.py`](backend/Analyzer/analysis/llm/summarizer.py) —
 the same model that answers, given the previous summary and only what has
 happened since, so the cost of summarising does not grow with the conversation.
 
@@ -360,7 +382,7 @@ quietly distort every answer after it, so not summarising is the safer failure.
 
 `REDIS_URL` blank is a supported configuration and the default: every read goes
 to the database, which is correct, just slower. With it set,
-[`core/cache.py`](backend/Analyzer/core/cache.py) keeps each conversation's last
+[`conversations/cache.py`](backend/Analyzer/conversations/cache.py) keeps each conversation's last
 `REDIS_HOT_WINDOW` messages under a TTL that every read pushes out again, so
 active dossiers stay hot and abandoned ones fall out on their own.
 

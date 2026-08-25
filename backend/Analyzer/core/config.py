@@ -1,17 +1,23 @@
-"""Application configuration."""
+"""Application configuration.
+
+One settings object, read from the environment (or a ``.env`` beside the
+process). Nothing else in the app reads ``os.environ`` — a setting that is not
+declared here does not exist.
+"""
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Annotated
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode
 
-# backend/Analyzer/core/config.py -> backend/
-_BACKEND_DIR = Path(__file__).resolve().parents[2]
-_DEFAULT_DB_PATH = _BACKEND_DIR / "data" / "app.db"
+# Drivers that speak the async protocol every query in this app is awaited on.
+# A synchronous URL (``postgresql://``) builds an engine that raises on first
+# use, which is a confusing way to find out at request time what can be said
+# plainly at startup.
+_ASYNC_POSTGRES_SCHEMES = ("postgresql+asyncpg://", "postgresql+psycopg://")
 
 
 class Settings(BaseSettings):
@@ -23,14 +29,18 @@ class Settings(BaseSettings):
     CHROMA_COLLECTION: str = "corporate_filings"
 
     # ── Database ─────────────────────────────────────────────────────────
-    # Any async SQLAlchemy URL, which is what SQLModel takes too. SQLite needs
-    # no server and is the default; point DATABASE_URL at Postgres
-    # (postgresql+asyncpg://user:pass@host/db) to move the accounts off the
-    # local file without touching the code.
-    DATABASE_URL: str = f"sqlite+aiosqlite:///{_DEFAULT_DB_PATH}"
+    # Postgres, always. The schema leans on it — ``jsonb`` for message
+    # metadata, foreign keys that are enforced without being asked, a pool in
+    # front of a real server — and the deployment (compose, and the CNPG
+    # cluster in deploy/) runs it. The default points at a local server; a
+    # deployment overrides it.
+    DATABASE_URL: str = (
+        "postgresql+asyncpg://analyzer:analyzer@localhost:5432/filing_analyzer"
+    )
     DB_ECHO: bool = False
     DB_POOL_SIZE: int = 5
     DB_MAX_OVERFLOW: int = 10
+    DB_POOL_RECYCLE_SECONDS: int = 1800
 
     # ── Conversation history ─────────────────────────────────────────────
     # What the model is sent is not what the analyst sees: the ledger keeps
@@ -55,7 +65,7 @@ class Settings(BaseSettings):
 
     # ── Auth ─────────────────────────────────────────────────────────────
     # JWT_SECRET_KEY signs both token kinds. Leave it unset only in local
-    # development — the app refuses to start without one anywhere else,
+    # development — the app then signs with a key that dies with the process,
     # because a guessable secret means anyone can mint a valid access token.
     JWT_SECRET_KEY: str = ""
     JWT_ALGORITHM: str = "HS256"
@@ -69,6 +79,19 @@ class Settings(BaseSettings):
     CORS_ORIGINS: Annotated[list[str], NoDecode] = ["*"]
 
     model_config = {"env_file": ".env", "extra": "ignore"}
+
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def _require_async_postgres(cls, value: str) -> str:
+        """Refuse at startup what would otherwise fail at the first query."""
+        url = value.strip()
+        if not url.startswith(_ASYNC_POSTGRES_SCHEMES):
+            raise ValueError(
+                "DATABASE_URL must be an async Postgres URL, e.g. "
+                "postgresql+asyncpg://user:password@host:5432/filing_analyzer "
+                f"(got {url.split('://', 1)[0] or url!r})"
+            )
+        return url
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

@@ -330,14 +330,13 @@ All of it is at the bottom of
 
 ```python
 app = FastAPI(title="Corporate Filing Analyzer Agent API", ...)
-app.include_router(auth_router)
-app.include_router(chat_router)
+app.include_router(api_router)
 
 sio = socketio.AsyncServer(
     async_mode="asgi",
     cors_allowed_origins=settings.CORS_ORIGINS if settings.CORS_ORIGINS != ["*"] else "*",
 )
-register_handlers(sio, chat_service, auth_service)
+register_handlers(sio, analysis_pipeline, auth_service)
 
 asgi_app = socketio.ASGIApp(sio, other_asgi_app=app)
 ```
@@ -352,7 +351,7 @@ Read it as four moves:
    common source of "it hangs" reports.)
 3. **`register_handlers(...)`** — attaches this app's `connect` /
    `disconnect` / `query` handlers. They live in
-   [api/socket_handler.py](../backend/Analyzer/api/socket_handler.py) rather
+   [api/socket.py](../backend/Analyzer/api/socket.py) rather
    than in `main.py`, so the wiring file stays about wiring.
 4. **`ASGIApp(sio, other_asgi_app=app)`** — the composition step, and the one
    worth understanding properly.
@@ -379,10 +378,11 @@ the Docker deployment.
 
 > **Note on services.** The Socket.IO handlers cannot use FastAPI's `Depends`
 > — dependency injection is a FastAPI-routing feature and Socket.IO events do
-> not go through FastAPI at all. So `register_handlers(sio, chat_service,
+> not go through FastAPI at all. So `register_handlers(sio, analysis_pipeline,
 > auth_service)` passes the singletons in explicitly, taking them from
-> [api/deps.py](../backend/Analyzer/api/deps.py), the same module the HTTP
-> routes get them from. Same objects, different delivery mechanism.
+> [container.py](../backend/Analyzer/container.py) — the same objects the HTTP
+> routes receive through [api/dependencies.py](../backend/Analyzer/api/dependencies.py).
+> Same objects, different delivery mechanism.
 >
 > Likewise, database sessions are opened by hand inside the handler with
 > `async with SessionLocal() as db:` rather than injected.
@@ -427,7 +427,7 @@ Why that is better here:
   connection is answered for the account that opened it — the client cannot
   ask on someone else's behalf, because it never sends a user id at all.
 
-From [api/socket_handler.py](../backend/Analyzer/api/socket_handler.py):
+From [api/socket.py](../backend/Analyzer/api/socket.py):
 
 ```python
 @sio.event
@@ -580,7 +580,7 @@ Client → server: exactly one event.
   it so a reopened dossier still shows what a run was asked against. Capped at
   20 server-side.
 
-Server → client: six events, produced by `ChatService.query_stream` and
+Server → client: six events, produced by `AnalysisPipeline.query_stream` and
 forwarded by the handler.
 
 | Event | Payload | Meaning |
@@ -640,7 +640,7 @@ Two subtleties, both commented in the source:
 ### 3. Stream, forwarding as you go
 
 ```python
-async for event in chat.query_stream(question, session_id=..., title=..., history=...):
+async for event in analysis.query_stream(question, session_id=..., title=..., history=...):
     payload = dict(event)
     event_name = payload.pop("event")
     payload["session_id"] = session_id
@@ -706,7 +706,10 @@ exhaust a connection pool under mild load. Open late, close early.
 
 ## The client side
 
-The receiving half, from [frontend/app.js](../frontend/app.js):
+The receiving half, from [frontend/app.js](../frontend/app.js). What follows is
+the socket code alone; for the client operation each event belongs to — staging
+a filing, hydrating a dossier, switching mid-run — see
+[FRONTEND-SOCKETIO.md](FRONTEND-SOCKETIO.md).
 
 ```js
 socket.on("run_started", (data) => { const t = liveTurn(data); if (t) t.runId = data.run_id; });
@@ -1200,9 +1203,9 @@ socket.id          // the sid, only while connected
 | File | What lives there |
 |---|---|
 | [backend/Analyzer/main.py](../backend/Analyzer/main.py) | `AsyncServer`, `ASGIApp`, CORS, the mount |
-| [backend/Analyzer/api/socket_handler.py](../backend/Analyzer/api/socket_handler.py) | `connect` / `disconnect` / `query`, auth, streaming, ledger writes |
-| [backend/Analyzer/api/deps.py](../backend/Analyzer/api/deps.py) | the singleton services passed into the handlers |
-| [backend/Analyzer/services/chat_service.py](../backend/Analyzer/services/chat_service.py) | `query_stream` — the async generator behind every event |
+| [backend/Analyzer/api/socket.py](../backend/Analyzer/api/socket.py) | `connect` / `disconnect` / `query`, auth, streaming, ledger writes |
+| [backend/Analyzer/container.py](../backend/Analyzer/container.py) | the singleton services passed into the handlers |
+| [backend/Analyzer/analysis/pipeline.py](../backend/Analyzer/analysis/pipeline.py) | `query_stream` — the async generator behind every event |
 | [frontend/app.js](../frontend/app.js) | client construction, auth callback, all six `socket.on` handlers, the one `emit` |
 | [frontend/nginx.conf](../frontend/nginx.conf) | the `/socket.io/` proxy block |
 | [backend/Dockerfile](../backend/Dockerfile) | `uvicorn main:asgi_app` |

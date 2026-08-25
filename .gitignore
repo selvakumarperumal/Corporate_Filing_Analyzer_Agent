@@ -209,10 +209,6 @@ __marimo__/
 logs/
 *.log
 
-# Local runtime data: the Chroma vector store and the account SQLite
-# database. Both are rebuilt or provisioned per environment; real
-# deployments point DATABASE_URL at a server instead.
+# Local runtime data: the Chroma vector store the filings are embedded into.
+# Accounts and the message ledger live in Postgres, not on this disk.
 backend/data/
-*.db-journal
-*.db-wal
-*.db-shm

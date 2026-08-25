@@ -10,9 +10,14 @@ Filings are scoped twice over: to the account that uploaded them, and within
 that account to the dossier they were attached to. Deleting the dossier
 discards them.
 
-Dossiers persist. Their messages are rows in the database, their filings are
+Dossiers persist. Their messages are rows in Postgres, their filings are
 collections in the vector store, and both survive a restart — so an analyst who
 comes back tomorrow reopens the conversation where they left it.
+
+This module is only the assembly: the app, its middleware, the lifespan, and
+the two protocols mounted side by side. What it assembles is built in
+:mod:`container` and lives in the domain packages — :mod:`auth`,
+:mod:`conversations`, :mod:`analysis`.
 """
 
 from __future__ import annotations
@@ -25,20 +30,19 @@ import socketio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from core.logging_config import setup_logging
+from core.logging import setup_logging
 
 # Configure logging before the app modules are imported, so the messages they
 # log while loading (prompts, models, graph) are captured too.
 setup_logging()
 
-from api.auth_routes import router as auth_router  # noqa: E402
-from api.chat_routes import router as chat_router  # noqa: E402
-from api.deps import auth_service, chat_service  # noqa: E402
-from api.socket_handler import register_handlers  # noqa: E402
-from core.cache import message_cache  # noqa: E402
+from api.dependencies import auth_service  # noqa: E402
+from api.routes import api_router  # noqa: E402
+from api.socket import register_handlers  # noqa: E402
+from container import analysis_pipeline  # noqa: E402
+from conversations.cache import message_cache  # noqa: E402
 from core.config import settings  # noqa: E402
-from core.database import SessionLocal, init_db  # noqa: E402
-from services.chat_service import scoped_session_id  # noqa: E402
+from db.engine import SessionLocal, init_db  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +69,8 @@ async def _prune_orphaned_filings() -> None:
     """
     from sqlmodel import select  # noqa: PLC0415 - after logging is configured
 
-    from models.conversation import Conversation
+    from analysis.pipeline import scoped_session_id  # noqa: PLC0415
+    from conversations.models import Conversation  # noqa: PLC0415
 
     try:
         async with SessionLocal() as session:
@@ -73,9 +78,10 @@ async def _prune_orphaned_filings() -> None:
                 select(Conversation.user_id, Conversation.client_id)
             )
             live = [
-                scoped_session_id(user_id, client_id) for user_id, client_id in result.all()
+                scoped_session_id(user_id, client_id)
+                for user_id, client_id in result.all()
             ]
-        chat_service.vector.prune_to(live)
+        analysis_pipeline.vector.prune_to(live)
     except Exception:
         # Startup housekeeping. Failing it would cost the analyst their app
         # over disk that is merely untidy.
@@ -97,29 +103,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(auth_router)
-app.include_router(chat_router)
-
-
-@app.get("/api/health")
-async def health() -> dict[str, str]:
-    """Report that the API is up and which models it is using.
-
-    Deliberately open: a health check that needs a login cannot be used by the
-    thing that has to know whether logins are working.
-    """
-    return {
-        "status": "ok",
-        "model": settings.OLLAMA_MODEL,
-        "embedding_model": settings.OLLAMA_EMBEDDING_MODEL,
-    }
+app.include_router(api_router)
 
 
 sio = socketio.AsyncServer(
     async_mode="asgi",
     cors_allowed_origins=settings.CORS_ORIGINS if settings.CORS_ORIGINS != ["*"] else "*",
 )
-register_handlers(sio, chat_service, auth_service)
+register_handlers(sio, analysis_pipeline, auth_service)
 
 # Entry point: `uvicorn main:asgi_app`
 asgi_app = socketio.ASGIApp(sio, other_asgi_app=app)

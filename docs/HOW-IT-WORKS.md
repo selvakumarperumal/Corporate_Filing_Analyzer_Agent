@@ -6,7 +6,8 @@ attaching filings, asking questions, deleting dossiers, and managing sessions.
 
 This is the *architecture and behavior* document. Setup, configuration values, and the general
 reference live in the [README](../README.md); the real-time transport — how Socket.IO is mounted
-onto FastAPI and how events are streamed — is in [SOCKETIO.md](SOCKETIO.md).
+onto FastAPI and how events are streamed — is in [SOCKETIO.md](SOCKETIO.md), and the browser's own
+side of it, operation by operation, is in [FRONTEND-SOCKETIO.md](FRONTEND-SOCKETIO.md).
 
 ---
 
@@ -41,13 +42,13 @@ onto FastAPI and how events are streamed — is in [SOCKETIO.md](SOCKETIO.md).
 |---|---|---|
 | Workbench | Plain HTML/CSS/JS, no build step, zero heavy frameworks | `frontend/` |
 | API | FastAPI for HTTP, Socket.IO for the streaming chat, one ASGI app | `backend/Analyzer/main.py` |
-| Graph | LangGraph: `retrieve → router → <category>` | `backend/Analyzer/graph/` |
-| Ledger | SQLModel async — accounts, conversations, messages, refresh tokens | `backend/Analyzer/models/` |
+| Graph | LangGraph: `retrieve → router → <category>` | `backend/Analyzer/analysis/graph/` |
+| Ledger | SQLModel async over Postgres — accounts, dossiers, messages, refresh tokens | `backend/Analyzer/auth/models.py`, `backend/Analyzer/conversations/models.py` |
 | Vector store | Chroma, one isolated collection per dossier | `backend/data/chroma_db/` |
-| Cache | Redis, optional, holds each conversation's hot tail | `backend/Analyzer/core/cache.py` |
+| Cache | Redis, optional, holds each conversation's hot tail | `backend/Analyzer/conversations/cache.py` |
 | Model | Ollama on the host — `llama3.1` to answer, `nomic-embed-text` to embed | Host machine |
 
-The SQL database is the source of truth for all users, dossiers, and messages. Redis holds a copy of the hot tail and is allowed to be absent, cold, or switched off. Chroma holds the filing text and vector embeddings; nothing else does.
+Postgres is the source of truth for all users, dossiers, and messages. Redis holds a copy of the hot tail and is allowed to be absent, cold, or switched off. Chroma holds the filing text and vector embeddings; nothing else does.
 
 `main.py` mounts both protocols as one ASGI app:
 
@@ -72,7 +73,7 @@ Because `client_id` is only unique per account, nothing ever looks a conversatio
 UniqueConstraint("user_id", "client_id", name="uq_conversation_owner_client")
 ```
 
-The same reasoning governs the vector store. `scoped_session_id()` in `services/chat_service.py` binds the owner into the id before it ever reaches Chroma:
+The same reasoning governs the vector store. `scoped_session_id()` in `analysis/pipeline.py` binds the owner into the id before it ever reaches Chroma:
 
 ```python
 def scoped_session_id(user_id: str, session_id: str) -> str:
@@ -89,11 +90,11 @@ which is then SHA-256'd into a collection name (`chat-<hash>`). There is no id a
 
 `lifespan` in `main.py`, in order:
 
-1. **`init_db()`** — creates tables if absent. On SQLite it also `mkdir`s the parent directory and registers a `connect` listener that issues `PRAGMA foreign_keys=ON` on every connection. SQLite ignores foreign keys unless asked per connection, so without this the `ON DELETE CASCADE` on `refresh_tokens.user_id` and `messages.conversation_id` would be decorative.
+1. **`init_db()`** — imports the table modules so SQLModel's metadata knows about them, then creates any that are absent. Nothing more: Postgres enforces the `ON DELETE CASCADE` on `refresh_tokens.user_id` and `messages.conversation_id` itself, and the connection pool is built when `db/engine.py` is imported. Versioned migrations would go in front of this (Alembic); table-creation on boot is enough for one service.
 2. **`message_cache.connect()`** — no `REDIS_URL`, missing package, bad URL or unreachable server all log and continue. The cache is simply off.
 3. **`_prune_orphaned_filings()`** — reads every `(user_id, client_id)` pair still in `conversations`, maps them through `scoped_session_id()`, and hands the list to `VectorService.prune_to()`. Any `chat-*` collection not on that list is dropped.
 
-Collections **outlive the process**, because the dossiers they belong to do. What gets cleared at startup is only what nothing points at any more: a dossier deleted while the backend was down, or a crash between ingesting a file and recording it in SQL. Everything an analyst can still open is kept. If pruning throws, it is logged and swallowed — untidy disk is not worth costing someone their app at startup.
+Collections **outlive the process**, because the dossiers they belong to do. What gets cleared at startup is only what nothing points at any more: a dossier deleted while the backend was down, or a crash between ingesting a file and recording it in Postgres. Everything an analyst can still open is kept. If pruning throws, it is logged and swallowed — untidy disk is not worth costing someone their app at startup.
 
 ### Frontend
 
@@ -122,7 +123,7 @@ sequenceDiagram
     participant B as Browser (auth.js)
     participant A as POST /api/auth/signup
     participant S as AuthService
-    participant DB as SQL Database
+    participant DB as Postgres
 
     B->>A: POST { email, name, password }
     A->>S: auth.signup(session, email, name, password)
@@ -224,7 +225,7 @@ The workbench maintains a clean separation between auth tokens and runtime UI st
 | **`auth.js` in-memory state** | Active `session` object, background refresh timer ID, in-flight refresh promise | Lives for the lifetime of the page tab. |
 | **`app.js` in-memory state** | `state.dossiers` array, `state.active` dossier, `state.turn`, detached DOM run-stacks | Cleared on sign-out or page reload. |
 | **Browser DOM** | Detached `<div class="run-stack">` elements for each open dossier | Preserved in JS memory while switching between dossiers. |
-| **Filings & Messages** | **Not stored in browser localStorage** | Stored securely on the server (SQL + Chroma) and fetched on demand. |
+| **Filings & Messages** | **Not stored in browser localStorage** | Stored securely on the server (Postgres + Chroma) and fetched on demand. |
 
 ---
 
@@ -235,7 +236,7 @@ sequenceDiagram
     participant B as Browser (authFetch)
     participant A as FastAPI Endpoints
     participant S as AuthService
-    participant DB as SQL Database
+    participant DB as Postgres
 
     Note over B,A: 1. Normal Authenticated Request
     B->>A: GET /api/conversations (Header: Authorization: Bearer <access_token>)
@@ -315,7 +316,7 @@ const socket = io(BACKEND_URL, {
 
 `auth` is a callback, so it is evaluated on every reconnection attempt. If a connection drops and reconnects later, it sends the current access token, not the expired one.
 
-Server-side, `connect` in `socket_handler.py` resolves the token to a user and saves `{user_id, email}` against the socket `sid`. If the token is missing or invalid, it raises `ConnectionRefusedError` to reject unauthenticated connections immediately.
+Server-side, `connect` in `api/socket.py` resolves the token to a user and saves `{user_id, email}` against the socket `sid`. If the token is missing or invalid, it raises `ConnectionRefusedError` to reject unauthenticated connections immediately.
 
 ### Restoring the dock
 
@@ -415,7 +416,7 @@ if (files.length) {
    - Text/MD/CSV: decoded as UTF-8.
 2. **Chunking**: `RecursiveCharacterTextSplitter` divides text into 1,000-character chunks with 200-character overlap.
 3. **Vectorization**: Embedded via `nomic-embed-text` and stored in Chroma collection `chat-<sha256(user_id:client_id)[:32]>`.
-4. **Registration**: Calls `open_conversation()` and `record_filing()` in the SQL database, adding metadata (name, chunk count, timestamp) to `conversation.filings`.
+4. **Registration**: Calls `open_conversation()` and `record_filing()` in Postgres, adding metadata (name, chunk count, timestamp) to `conversation.filings`.
 
 ---
 
@@ -426,10 +427,10 @@ The complete end-to-end execution flow:
 ```mermaid
 sequenceDiagram
     participant B as Browser (app.js)
-    participant S as socket_handler
+    participant S as api/socket.py
     participant H as HistoryService
     participant R as Redis Cache
-    participant DB as SQL Database
+    participant DB as Postgres
     participant G as LangGraph Pipeline
     participant C as Chroma Vector DB
     participant O as Ollama LLM
@@ -486,7 +487,7 @@ sequenceDiagram
 * **Analysis Node**: Evaluates the category prompt, injecting retrieved chunks, rolling summary, and recent context.
 
 ### 3. Post-Run Persistence & Rolling Summary
-* Assistant answer is saved to `messages` SQL table and pushed to Redis.
+* Assistant answer is saved to the `messages` table and pushed to Redis.
 * `schedule_summary()` checks if unsummarized messages exceed threshold (24). If so, an asynchronous background task folds older messages into `conversation.summary`.
 
 ---
@@ -502,7 +503,7 @@ sequenceDiagram
 
 Compiled with **no checkpointer** — a run goes straight through without pausing. Each run gets a fresh `thread_id` (the UUID `run_id`), ensuring concurrent runs never collide.
 
-Categories are strictly defined in `core/categories.py` and mapped to prompts in `config/prompts.yaml`.
+Categories are strictly defined in `analysis/categories.py` and mapped to prompts in `config/prompts.yaml`.
 
 ---
 
@@ -569,7 +570,7 @@ DELETE /api/conversations/{client_id}
 sequenceDiagram
     participant B as Browser
     participant API as DELETE /api/conversations/{id}
-    participant DB as SQL Database
+    participant DB as Postgres
     participant R as Redis Cache
     participant C as Chroma Vector DB
 
@@ -585,8 +586,8 @@ sequenceDiagram
 ```
 
 ### Deletion steps in strict order:
-1. **SQL Database**: Deletes `Conversation` row. Foreign keys with `ON DELETE CASCADE` automatically delete all child rows in `messages`.
-2. **Redis Cache**: Drops the hot tail key `chat:recent:{conversation_id}`.
+1. **Postgres**: Deletes the `Conversation` row. Foreign keys with `ON DELETE CASCADE` automatically delete all child rows in `messages`.
+2. **Redis Cache**: Drops the hot tail key `cfa:conv:{conversation_id}:tail` (`cfa` is `REDIS_KEY_PREFIX`).
 3. **Chroma Vector Store**: Drops collection `chat-<hash>`, wiping all chunk embeddings from disk.
 4. **Client Workbench**: Removes dossier from sidebar dock and opens the nearest neighbor (or creates a new blank dossier if none remain).
 
@@ -601,8 +602,8 @@ sequenceDiagram
 | **Read (Messages)** | Select old dossier | `GET /api/conversations/{id}/messages` | `?limit=30&before_seq=...` | Reads paged rows from `messages`, aligns whole runs, computes pagination cursor | Renders question/answer runs, parses markdown, attaches category tags |
 | **Update (Rename)** | First query or manual | `PATCH /api/conversations/{id}` | `{"title": "FY24 Revenue Review"}` | Updates `title` in `conversations` table | Updates header stamp and sidebar row label |
 | **Upload Filing** | Attach & Send | `POST /api/upload` | Multipart Form: `file`, `session_id` | Parses PDF/TXT, splits chunks, saves embeddings in Chroma, appends to `conversation.filings` | Renders filing chip in tray, updates active filing badge |
-| **Ask / Stream** | Send query | Socket.IO `query` event | `{query, session_id, title, files}` | LangGraph retrieves Chroma chunks, routes category, streams tokens, saves answer to SQL & Redis | Streams live text into markdown body, renders category badge |
-| **Delete Dossier** | Click "Clear" / Discard | `DELETE /api/conversations/{id}` | Headers: `Authorization: Bearer <token>` | Cascades delete in SQL `conversations`/`messages`, drops Redis key, deletes Chroma collection | Slices dossier from dock, mounts neighbor or fresh dossier |
+| **Ask / Stream** | Send query | Socket.IO `query` event | `{query, session_id, title, files}` | LangGraph retrieves Chroma chunks, routes category, streams tokens, saves answer to Postgres & Redis | Streams live text into markdown body, renders category badge |
+| **Delete Dossier** | Click "Clear" / Discard | `DELETE /api/conversations/{id}` | Headers: `Authorization: Bearer <token>` | Cascades delete in Postgres `conversations`/`messages`, drops Redis key, deletes Chroma collection | Slices dossier from dock, mounts neighbor or fresh dossier |
 
 ---
 
@@ -620,13 +621,13 @@ sequenceDiagram
 
 | Data | Store | Survives restart? | Survives dossier delete? |
 |---|---|---|---|
-| Accounts, password hashes | SQL `users` | Yes | N/A (cascades on account delete) |
-| Refresh token `jti`s | SQL `refresh_tokens` | Yes | Cascades on account delete |
-| Dossiers, titles, filing register | SQL `conversations` | Yes | Deleted |
-| Every message + token count | SQL `messages` | Yes | Deleted (cascades) |
+| Accounts, password hashes | Postgres `users` | Yes | N/A (cascades on account delete) |
+| Refresh token `jti`s | Postgres `refresh_tokens` | Yes | Cascades on account delete |
+| Dossiers, titles, filing register | Postgres `conversations` | Yes | Deleted |
+| Every message + token count | Postgres `messages` | Yes | Deleted (cascades) |
 | Rolling summary | `conversations.summary` | Yes | Deleted |
 | Filing text + vector embeddings | Chroma `chat-<hash>` | Yes | Collection dropped |
-| Hot message tail | Redis `chat:recent:*` | No (cache only) | Key dropped |
+| Hot message tail | Redis `cfa:conv:*:tail` | No (cache only) | Key dropped |
 | Staged-but-unsent files | Browser memory | No | Cleared |
 | Empty new dossier | Browser memory | No | Cleared |
 
@@ -636,7 +637,7 @@ sequenceDiagram
 
 | Failure Scenario | System Behavior |
 |---|---|
-| **Redis down / unreachable** | Cache disabled automatically; all reads go directly to SQL database without errors. |
+| **Redis down / unreachable** | Cache disabled automatically; all reads go directly to Postgres without errors. |
 | **Summarizer LLM fails** | Logged and swallowed; unsummarized tail is preserved and retried on the next run. |
 | **Pruning fails at startup** | Logged and swallowed; orphaned Chroma collections remain safely isolated on disk. |
 | **Dossier naming fails** | Falls back to "Untitled dossier"; answer generation continues unaffected. |

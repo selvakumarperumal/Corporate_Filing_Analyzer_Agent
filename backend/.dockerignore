@@ -4,8 +4,8 @@
 **/__pycache__
 **/*.py[cod]
 
-# Local state: the SQLite database, the Chroma store and the rotated logs all
-# belong to whoever is running the container, not to the image.
+# Local state: the Chroma store and the rotated logs belong to whoever is
+# running the container, not to the image.
 data/
 logs/
 

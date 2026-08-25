@@ -13,7 +13,7 @@ disable_existing_loggers: false
 formatters:
   # Console: short and scannable while the server is running.
   console:
-    format: "%(asctime)s | %(levelname)-8s | %(name)-28s | %(message)s"
+    format: "%(asctime)s | %(levelname)-8s | %(name)-31s | %(message)s"
     datefmt: "%H:%M:%S"
 
   # Files: full detail, including where the line came from.
@@ -50,15 +50,26 @@ handlers:
 
 loggers:
   # ── Our code: verbose, so every run can be traced end to end ──────────
-  main: # startup, HTTP endpoints
+  #
+  # One entry per top-level package, and the level applies to everything
+  # under it — `analysis` covers `analysis.graph.nodes`,
+  # `analysis.retrieval.vector_store` and the rest. Add a deeper name here
+  # only to say something different about one module.
+  main: # startup and app assembly
     level: DEBUG
-  api: # Socket.IO connections and queries
+  container: # the process-wide services, built once
     level: DEBUG
-  graph: # retrieve -> router -> analysis node hops
+  api: # HTTP routes, dependencies, Socket.IO connections and queries
     level: DEBUG
-  services: # LLM, vector store, routing, analysis
+  auth: # signup, login, refresh rotation, token verification
     level: DEBUG
-  prompts: # prompt loading
+  conversations: # the ledger, the context slice, the Redis tail cache
+    level: DEBUG
+  analysis: # retrieval, routing, the graph hops, the LLM calls
+    level: DEBUG
+  db: # engine and schema creation
+    level: DEBUG
+  core: # settings and paths
     level: INFO
 
   # ── Third-party noise: keep it out of the console ─────────────────────
