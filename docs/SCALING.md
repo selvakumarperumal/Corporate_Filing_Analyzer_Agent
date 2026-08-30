@@ -27,7 +27,7 @@ describes.
 | Where to look | For |
 | --- | --- |
 | **this file** | what breaks with N instances, and the fix for each |
-| [DEPLOYMENT.md](DEPLOYMENT.md) | how to deploy each configuration, and how to test it |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | how to deploy it — locally or on Kubernetes — and how to test it |
 | [`deploy/minikube/`](../deploy/minikube/) | all of it, applied — manifests you can run |
 | [`deploy/checks/`](../deploy/checks/) | scripts that prove a deployment is one of the good ones |
 | [SOCKETIO.md](SOCKETIO.md#running-more-than-one-worker) | the short version, in the Socket.IO guide |
@@ -991,12 +991,14 @@ sweep — are in [`deploy/checks/`](../deploy/checks/), and
 deploying, including how to break each thing on purpose and watch the right
 check go red.
 
-A shortcut that catches most of the rest:
+And the fastest way to *see* a break rather than read about one: take the
+setting away from a running deployment and watch the right check go red.
 
 ```bash
-CHROMA_HOST=chroma docker compose --profile scaled up --scale backend=2
+kubectl -n cfa set env deploy/cfa-backend CHROMA_HOST=""     # then split.py
+kubectl -n cfa set env deploy/cfa-backend CHROMA_HOST-       # and back
 ```
 
-then use the app normally for five minutes. Without `CHROMA_HOST` the same
-command reproduces Break #2 on purpose, which is a useful thing to have seen
-once.
+[DEPLOYMENT.md §8](DEPLOYMENT.md#8-breaking-it-on-purpose) does this for the
+shared store, the shared secret, Redis, Chroma and Ollama in turn. A check you
+have never seen fail is a check you do not know works.

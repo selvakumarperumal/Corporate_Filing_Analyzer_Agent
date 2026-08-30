@@ -27,4 +27,4 @@ They create accounts and dossiers named after themselves (`smoke-…`,
 deployment, not one with real work in it.
 
 Full instructions, and what to do when one fails, are in
-[`docs/DEPLOYMENT.md`](../../docs/DEPLOYMENT.md#the-checks).
+[`docs/DEPLOYMENT.md`](../../docs/DEPLOYMENT.md#6-the-checks).

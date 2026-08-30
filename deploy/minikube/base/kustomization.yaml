@@ -7,10 +7,10 @@
 #     kubectl apply -k deploy/minikube
 #
 # The Secret is deliberately not here. It holds a signing key that should be
-# generated, not committed, so it is created out of band — `bootstrap.sh` does
-# it, or see the README. Applying this without it leaves the backend and
-# postgres pods in CreateContainerConfigError until the Secret exists, at
-# which point they start on their own.
+# generated, not committed, so it is created out of band — see step 4 in
+# docs/DEPLOYMENT.md. Applying this without it leaves the backend and postgres
+# pods in CreateContainerConfigError until the Secret exists, at which point
+# they start on their own.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
