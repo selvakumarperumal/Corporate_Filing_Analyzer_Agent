@@ -1,0 +1,13 @@
+# The deployment: two API replicas, one shared vector store, everything
+# docs/SCALING.md asks for.
+#
+#     kubectl apply -k deploy/minikube
+#
+# A thin wrapper rather than the manifests themselves, so that `base/` stays a
+# base — something an overlay elsewhere can build on without kustomize
+# complaining that its base is an ancestor directory.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - base

@@ -8,6 +8,14 @@ Collections outlive the process, because the conversations they belong to do:
 a dossier reopened tomorrow still answers from the filing attached to it today.
 What is cleared at startup is only what no conversation claims any more — see
 :meth:`VectorService.prune_to`.
+
+Where they live depends on one setting. Unset, ``CHROMA_HOST`` gives the
+embedded store: a directory on this process's own disk, which is right for a
+single instance and a bug for two — a filing ingested by one process is simply
+not there for another, and sharing the directory between them corrupts the
+SQLite index rather than sharing anything. Set it and the same code talks to
+one Chroma server over HTTP, every instance a client of it, which is what lets
+the API run more than one replica. See ``docs/SCALING.md``.
 """
 
 from __future__ import annotations
@@ -15,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import io
 import logging
+from collections import OrderedDict
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -24,6 +33,7 @@ from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from core.config import settings
 from core.paths import CHROMA_DIR
 
 logger = logging.getLogger(__name__)
@@ -35,6 +45,12 @@ SUPPORTED_EXTENSIONS = (".pdf", *TEXT_EXTENSIONS)
 COLLECTION_PREFIX = "chat-"
 
 _PERSIST_DIR = str(CHROMA_DIR)
+
+# Open collection handles kept per process, so a busy dossier is not reopened
+# on every question. Bounded because the key is a session id: unbounded, a
+# long-lived instance accumulates one entry per dossier it has ever answered
+# for, which is a slow leak nobody notices until the pod is weeks old.
+_MAX_OPEN_COLLECTIONS = 512
 
 
 class VectorService:
@@ -52,12 +68,41 @@ class VectorService:
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
         )
-        self._client = chromadb.PersistentClient(path=persist_directory)
-        self._stores: dict[str, Chroma] = {}
+        if settings.CHROMA_HOST:
+            # A client of one shared server. Every instance sees the same
+            # collections, so an upload handled by one and a question answered
+            # by another agree about what has been filed.
+            location = f"{settings.CHROMA_HOST}:{settings.CHROMA_PORT}"
+            try:
+                # Connects here rather than on first use — the constructor
+                # heartbeats the server. Deliberate: a store that cannot be
+                # reached is a broken deployment, and it should say so while
+                # someone is watching the rollout, not on the first question.
+                self._client = chromadb.HttpClient(
+                    host=settings.CHROMA_HOST,
+                    port=settings.CHROMA_PORT,
+                    ssl=settings.CHROMA_SSL,
+                )
+            except Exception as error:
+                raise RuntimeError(
+                    f"Cannot reach the Chroma server at {location} "
+                    f"(CHROMA_HOST/CHROMA_PORT): {error}. Start it before the "
+                    f"API, or unset CHROMA_HOST to use the embedded store — "
+                    f"which is single-instance only."
+                ) from error
+        else:
+            # Embedded: a library reading this process's own disk. Correct for
+            # one instance, and the reason a second one cannot simply be
+            # started — see the module docstring.
+            self._client = chromadb.PersistentClient(path=persist_directory)
+            location = persist_directory
+        self._shared = bool(settings.CHROMA_HOST)
+        self._stores: OrderedDict[str, Chroma] = OrderedDict()
 
         logger.info(
-            "VectorService ready (persist=%s, chunk_size=%d, overlap=%d)",
-            persist_directory,
+            "VectorService ready (store=%s, shared=%s, chunk_size=%d, overlap=%d)",
+            location,
+            self._shared,
             chunk_size,
             chunk_overlap,
         )
@@ -127,14 +172,26 @@ class VectorService:
 
     def _store(self, session_id: str) -> Chroma:
         """Open (once per session) the collection holding this chat's filings."""
-        if session_id not in self._stores:
-            self._stores[session_id] = Chroma(
-                client=self._client,
-                collection_name=self._collection_name(session_id),
-                embedding_function=self.embeddings,
-            )
-            logger.debug("Opened collection for chat %s", session_id)
-        return self._stores[session_id]
+        store = self._stores.get(session_id)
+        if store is not None:
+            # Touched, so the dossiers being worked on now are the ones that
+            # survive the eviction below.
+            self._stores.move_to_end(session_id)
+            return store
+
+        store = Chroma(
+            client=self._client,
+            collection_name=self._collection_name(session_id),
+            embedding_function=self.embeddings,
+        )
+        self._stores[session_id] = store
+        if len(self._stores) > _MAX_OPEN_COLLECTIONS:
+            # Dropping a handle costs one reopen, never a filing: the
+            # collection itself is in the store, not in this dict.
+            evicted, _ = self._stores.popitem(last=False)
+            logger.debug("Closed least-recently-used collection handle %s", evicted)
+        logger.debug("Opened collection for chat %s", session_id)
+        return store
 
     def _collection_name(self, session_id: str) -> str:
         """Chroma-safe collection name for a session.

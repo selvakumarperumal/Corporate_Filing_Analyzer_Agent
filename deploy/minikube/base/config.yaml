@@ -1,0 +1,97 @@
+# Non-secret settings. Two ConfigMaps rather than one, so each consumer takes
+# a single `envFrom` and gets nothing it has no business reading.
+#
+# Everything here has a counterpart in docker-compose.yml or .env.example —
+# this is that same stack, expressed for Kubernetes.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cfa-config
+  labels:
+    app.kubernetes.io/part-of: corporate-filing-analyzer
+data:
+  # ── The model host ───────────────────────────────────────────────────
+  # Ollama is not in the cluster: it runs on your machine, exactly as it does
+  # under compose. `host.minikube.internal` is minikube's equivalent of
+  # `host.docker.internal` — it is injected into CoreDNS, so pods resolve it.
+  #
+  # Ollama must be listening on more than loopback for this to reach it:
+  #     OLLAMA_HOST=0.0.0.0 ollama serve
+  #
+  # To run the model inside the cluster instead, apply ollama.yaml and change
+  # this to http://ollama:11434.
+  OLLAMA_BASE_URL: "http://host.minikube.internal:11434"
+  OLLAMA_MODEL: "llama3.1:latest"
+  OLLAMA_EMBEDDING_MODEL: "nomic-embed-text:latest"
+
+  # ── The filings ──────────────────────────────────────────────────────
+  # Names the shared Chroma service. This one setting is the difference
+  # between an API that can be replicated and one that cannot: unset, each pod
+  # keeps its own embedded copy of the filings on its own disk and they drift
+  # apart the moment there are two. See docs/SCALING.md, Break #2.
+  CHROMA_HOST: "chroma"
+  CHROMA_PORT: "8000"
+
+  # ── The message cache ────────────────────────────────────────────────
+  # Shared across pods already, and every operation on it fails soft — see
+  # docs/SCALING.md §9. Blank this out and the app is still correct, just
+  # reading Postgres on every question.
+  REDIS_URL: "redis://redis:6379/0"
+
+  # ── Origins ──────────────────────────────────────────────────────────
+  # This is not only CORS. python-socketio refuses a handshake whose Origin is
+  # not on this list with a 400, so whatever host you type into the browser
+  # must appear here or the socket never connects.
+  #
+  #   http://cfa.local        the ingress (see README — needs an /etc/hosts line)
+  #   http://localhost:8080   `kubectl port-forward svc/cfa-frontend 8080:8080`
+  #
+  # Reaching it some other way (a raw `minikube ip`, a different port) means
+  # adding that origin here. For a throwaway cluster, "*" is also accepted.
+  CORS_ORIGINS: "http://cfa.local,http://localhost:8080,http://127.0.0.1:8080"
+
+  # ── Postgres pool, per pod ───────────────────────────────────────────
+  # N pods × (POOL_SIZE + MAX_OVERFLOW) must stay under the server's
+  # max_connections — 200 in postgres.yaml. See docs/SCALING.md §9.
+  DB_POOL_SIZE: "5"
+  DB_MAX_OVERFLOW: "5"
+
+  # ── Shutdown budget ──────────────────────────────────────────────────
+  # Three numbers, one budget, and they have to agree. On SIGTERM the pod
+  # sleeps 15s (preStop) so the ingress stops sending it work, the app then
+  # waits SHUTDOWN_DRAIN_SECONDS for answers still streaming to reach the
+  # ledger, and uvicorn gives the whole thing UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN
+  # — all inside terminationGracePeriodSeconds (180) or the kubelet SIGKILLs
+  # the lot. See docs/SCALING.md §12 and Break #4.
+  #
+  # uvicorn's CLI reads UVICORN_*-prefixed variables, so its budget can be set
+  # here rather than by rewriting the image's CMD.
+  UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN: "150"
+  SHUTDOWN_DRAIN_SECONDS: "120"
+
+  # A question older than this with no answer after it was interrupted by
+  # something that did not come back, and is closed out at startup. Well clear
+  # of a slow answer still running on another pod.
+  STALE_RUN_MINUTES: "30"
+
+  # ── Broadcasting ─────────────────────────────────────────────────────
+  # Empty on purpose. Nothing in this app emits to anyone but the asker, from
+  # the pod holding their connection, so there is nothing to route between
+  # pods and a Redis hop per token would be pure cost. Set it to the REDIS_URL
+  # above on the day someone adds the first `enter_room` — a shared dossier
+  # watched live, an analyst on two devices. docs/SCALING.md, Break #5.
+  SOCKETIO_MESSAGE_QUEUE_URL: ""
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cfa-postgres
+  labels:
+    app.kubernetes.io/part-of: corporate-filing-analyzer
+data:
+  # These two initialise the database *and* appear inside the `database-url`
+  # in the Secret. Change one and you must change the other, or the API
+  # authenticates against a role that was never created.
+  POSTGRES_USER: "analyzer"
+  POSTGRES_DB: "filing_analyzer"

@@ -26,8 +26,17 @@ question, reopens an old dossier or signs out, with the Socket.IO handlers shown
 in full — see **[docs/FRONTEND-SOCKETIO.md](docs/FRONTEND-SOCKETIO.md)**.
 
 Planning to run more than one instance? **[docs/SCALING.md](docs/SCALING.md)**
-lists what breaks and in what order — the JWT secret, the embedded vector store,
-sticky sessions, graceful shutdown — with EKS manifests for each.
+walks through what breaks and in what order — the JWT secret, the embedded
+vector store, sticky sessions, graceful shutdown, and a race on message
+positions that was quietly losing answers. The application-side ones are fixed;
+what remains is deployment, and **[deploy/minikube/](deploy/minikube/)** is that
+deployment, running: two API replicas against one shared vector store, on a
+cluster on your laptop.
+
+For the deployment itself — four ways to run it, what to test in each, and how
+to break each one on purpose to prove the tests would have caught it — see
+**[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**, with the runnable checks in
+**[deploy/checks/](deploy/checks/)**.
 
 The database has its own guide too:
 **[docs/DB-OPERATIONS.md](docs/DB-OPERATIONS.md)** covers the schema and every
@@ -133,7 +142,8 @@ Corporate_Filing_Analyzer_Agent/
 │   ├── SOCKETIO.md             # Socket.IO from zero to production: ideas, this app, deployment
 │   ├── FRONTEND-SOCKETIO.md    # What the backend does for each workbench operation, handler by handler
 │   ├── DB-OPERATIONS.md        # The schema, and every database read and write the app makes
-│   └── SCALING.md              # Running more than one instance: what breaks, and the fix for each
+│   ├── SCALING.md              # Running more than one instance: what breaks, and the fix for each
+│   └── DEPLOYMENT.md           # Four ways to deploy it, and how to test each one
 ├── deploy/
 │   └── cnpg-cluster.yaml       # The same database as a CloudNativePG Cluster (Kubernetes)
 ├── backend/
@@ -492,19 +502,28 @@ docker compose ps                     # what is running, and health
 docker compose restart backend        # pick up an env change
 docker compose down                   # stop, keeping all data
 docker compose down -v                # stop and delete accounts, ledger, filings
+
+# Two backends against one shared store — the arrangement a cluster uses.
+# Without CHROMA_HOST the same command reproduces the bug it exists to avoid.
+CHROMA_HOST=chroma docker compose --profile scaled up --scale backend=2
 ```
 
 ### What is stored where
 
-Three named volumes outlive `docker compose down`:
+Named volumes outlive `docker compose down`:
 
 | Volume | Holds | Lost if dropped |
 | :--- | :--- | :--- |
 | `postgres-data` | Accounts, dossiers, every message | Sign-ins and all history |
-| `filing-data` | The Chroma collections — the filings themselves | Dossiers survive with nothing left to answer from |
+| `filing-data` | The Chroma collections when the store is embedded — the default | Dossiers survive with nothing left to answer from |
+| `chroma-data` | The same filings when a shared store is running (`--profile scaled`) | The same |
 | `filing-logs` | `analyzer.log`, `errors.log` | Only the logs |
 
-`docker compose down -v` drops all three. Redis is intentionally not in that
+Only one of `filing-data` and `chroma-data` is in use at a time, and which one
+is decided by `CHROMA_HOST`. Switching between them does not move anything, so
+filings uploaded under one are not visible under the other.
+
+`docker compose down -v` drops all of them. Redis is intentionally not in that
 list: it is a cache, nothing lives only there, and flushing it costs one slower
 read per conversation.
 

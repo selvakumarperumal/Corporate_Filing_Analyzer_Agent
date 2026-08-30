@@ -1,0 +1,9 @@
+# Everything in this folder lives in one namespace, so the whole stack is
+# `kubectl delete namespace cfa` away from gone — useful on a laptop cluster
+# that gets torn down and rebuilt a lot.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cfa
+  labels:
+    app.kubernetes.io/part-of: corporate-filing-analyzer

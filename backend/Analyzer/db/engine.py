@@ -60,13 +60,25 @@ async def init_db() -> None:
 
     Enough for a single-service app; a deployment that needs versioned schema
     changes should put Alembic in front of this.
+
+    Serialised across instances by an advisory lock, because ``create_all``
+    looks before it leaps: it reflects the schema, decides what is missing, and
+    then creates it. Two instances starting together — which is exactly what a
+    rolling deploy does — can both decide a table is missing, and the one that
+    issues its ``CREATE TABLE`` second gets a DuplicateTable error and exits.
+    That turns an ordinary rollout into a CrashLoopBackOff, intermittently.
+
+    The lock is held to the end of the transaction, so whoever waits for it
+    reflects a schema that is already complete and creates nothing.
     """
     # Imported for the side effect of registering the tables on SQLModel's
     # metadata — create_all only knows about classes that have been defined.
     from auth import models as _auth_models  # noqa: F401, PLC0415
     from conversations import models as _conversation_models  # noqa: F401, PLC0415
+    from db.locks import held_for_transaction  # noqa: PLC0415 - avoids a cycle
 
     async with engine.begin() as connection:
+        await held_for_transaction(connection, "schema")
         await connection.run_sync(SQLModel.metadata.create_all)
 
     logger.info("Database ready (%s)", safe_url())

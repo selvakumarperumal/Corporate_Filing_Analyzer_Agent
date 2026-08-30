@@ -1,0 +1,115 @@
+# Accounts, dossiers and the message ledger.
+#
+# The plain `postgres:17-bookworm` image, for the same reason docker-compose.yml
+# uses it: CloudNativePG's operand image has no docker-entrypoint and cannot
+# initialise itself from POSTGRES_* variables. `deploy/cnpg-cluster.yaml` is
+# the real thing for a real cluster — three instances, failover, backups —
+# which is more than a laptop needs. Swap it in by installing the operator,
+# applying that file, and pointing `database-url` at the operator-generated
+# `filing-analyzer-db-app` secret (rewriting its scheme to postgresql+asyncpg).
+#
+# A StatefulSet, not a Deployment: one stable pod against one stable claim,
+# with no chance of a rolling update starting a second postgres on the volume.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: corporate-filing-analyzer
+spec:
+  # Headless: one instance, nothing to load-balance, and the API resolves the
+  # name straight to the pod IP.
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: corporate-filing-analyzer
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+        app.kubernetes.io/part-of: corporate-filing-analyzer
+    spec:
+      # Long enough for a clean shutdown checkpoint; a SIGKILLed postgres
+      # starts the next time in recovery.
+      # No legacy Docker-links variables; every setting comes from cfa-config.
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      containers:
+        - name: postgres
+          image: postgres:17-bookworm
+          imagePullPolicy: IfNotPresent
+          # Matches deploy/cnpg-cluster.yaml: room for every API pod's pool
+          # (DB_POOL_SIZE + DB_MAX_OVERFLOW each) plus the probes.
+          args: ["-c", "max_connections=200"]
+          ports:
+            - name: postgres
+              containerPort: 5432
+          envFrom:
+            - configMapRef:
+                name: cfa-postgres
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cfa-secrets
+                  key: postgres-password
+            # A subdirectory of the mount, not the mount itself: the image
+            # will not initdb into a directory it did not find empty.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            # -U/-d named explicitly, as in the compose healthcheck: a bare
+            # pg_isready reports the server up while it is still running the
+            # init scripts, and the API would connect too early.
+            exec:
+              command: ["sh", "-c", 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", 'pg_isready -U "$POSTGRES_USER"']
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests: { cpu: "100m", memory: 256Mi }
+            limits: { cpu: "1", memory: 1Gi }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        # minikube's default StorageClass. Deleting the StatefulSet leaves the
+        # claim behind on purpose — `kubectl delete pvc data-postgres-0` is the
+        # deliberate act that loses the accounts and the ledger.
+        resources:
+          requests:
+            storage: 5Gi

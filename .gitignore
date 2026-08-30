@@ -212,3 +212,7 @@ logs/
 # Local runtime data: the Chroma vector store the filings are embedded into.
 # Accounts and the message ledger live in Postgres, not on this disk.
 backend/data/
+
+# A filled-in copy of deploy/minikube/secret.example.yaml. Holds the JWT
+# signing key; the example beside it stays placeholder-only.
+deploy/minikube/secret.yaml

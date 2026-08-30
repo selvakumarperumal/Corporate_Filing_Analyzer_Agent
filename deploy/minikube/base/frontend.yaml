@@ -1,0 +1,74 @@
+# The workbench — nginx serving the static client.
+#
+# The image also reverse-proxies /api and /socket.io to `backend:8000`, which
+# is what removes CORS from the picture under compose. In the cluster the
+# ingress routes those two paths to the backend Service directly instead, and
+# for a good reason — see the comment in ingress.yaml. The proxy blocks in
+# frontend/nginx.conf simply go unused here; nothing about the image changes.
+#
+# Stateless and replaceable: no volumes, no state, and a rolling update is
+# safe because there is nothing for two of these to disagree about.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cfa-frontend
+  labels:
+    app.kubernetes.io/name: cfa-frontend
+    app.kubernetes.io/part-of: corporate-filing-analyzer
+spec:
+  selector:
+    app.kubernetes.io/name: cfa-frontend
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cfa-frontend
+  labels:
+    app.kubernetes.io/name: cfa-frontend
+    app.kubernetes.io/part-of: corporate-filing-analyzer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cfa-frontend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cfa-frontend
+        app.kubernetes.io/part-of: corporate-filing-analyzer
+    spec:
+      # No legacy Docker-links variables; every setting comes from cfa-config.
+      enableServiceLinks: false
+      securityContext:
+        # nginx-unprivileged's own uid — it listens on 8080 precisely so it
+        # never needs root to bind a port.
+        runAsUser: 101
+        runAsGroup: 101
+        runAsNonRoot: true
+      containers:
+        - name: frontend
+          image: cfa-frontend:latest
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            requests: { cpu: "10m", memory: 32Mi }
+            limits: { cpu: "200m", memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]

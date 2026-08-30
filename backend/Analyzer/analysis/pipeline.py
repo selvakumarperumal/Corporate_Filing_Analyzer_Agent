@@ -7,6 +7,7 @@ layers ask of it: ingest a filing, answer a question, forget a dossier.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator
@@ -81,9 +82,15 @@ class AnalysisPipeline:
             "session_id": session_id,
         }
 
-    def delete_session(self, session_id: str) -> dict[str, Any]:
-        """Throw away every filing this chat uploaded."""
-        deleted = self.vector.delete_session(session_id)
+    async def delete_session(self, session_id: str) -> dict[str, Any]:
+        """Throw away every filing this chat uploaded.
+
+        Off the event loop, because the store may not be local: Chroma's client
+        is synchronous either way, and against a shared server that is a
+        network round trip. Blocking the loop on it would stall every answer
+        streaming through this process, not just this request.
+        """
+        deleted = await asyncio.to_thread(self.vector.delete_session, session_id)
         return {"status": "ok", "session_id": session_id, "deleted": deleted}
 
     async def query_stream(

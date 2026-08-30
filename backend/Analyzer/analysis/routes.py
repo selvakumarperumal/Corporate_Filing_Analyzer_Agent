@@ -48,6 +48,15 @@ async def upload_file(
     if not content:
         raise HTTPException(status_code=400, detail=f"{file.filename} is empty")
 
+    # Opened before the ingest, not after, and the order is the whole point.
+    # Startup housekeeping drops vector collections no conversation claims
+    # (`VectorService.prune_to`), so a collection created while its row does
+    # not yet exist is a collection an instance starting in that moment is
+    # entitled to delete. With a shared store and rolling deploys that window
+    # is not theoretical. Opening the dossier first closes it: there is never a
+    # collection without a row behind it.
+    conversation = await history.open_conversation(session, user.id, session_id)
+
     try:
         result = await analysis.upload_file(
             content, file.filename, scoped_session_id(user.id, session_id)
@@ -66,9 +75,8 @@ async def upload_file(
             detail=f"Could not add {file.filename}: {error}",
         ) from error
 
-    # Recorded after the ingest, so the register never lists a filing that is
+    # Registered after the ingest, so the dock never lists a filing that is
     # not actually searchable.
-    conversation = await history.open_conversation(session, user.id, session_id)
     await history.record_filing(
         session, conversation, file.filename, int(result["chunks_ingested"])
     )

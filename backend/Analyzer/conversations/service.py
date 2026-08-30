@@ -24,8 +24,10 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 from sqlalchemy import func
+from sqlalchemy.orm import aliased
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -33,11 +35,13 @@ from conversations.cache import MessageCache, message_cache
 from conversations.models import (
     ROLE_ASSISTANT,
     ROLE_USER,
+    STATUS_ERROR,
     STATUS_OK,
     Conversation,
     Message,
 )
 from core.config import settings
+from core.leases import leases
 from core.tokens import estimate_tokens
 from db.columns import utcnow
 from db.engine import SessionLocal
@@ -47,6 +51,24 @@ logger = logging.getLogger(__name__)
 # How much of one message the summariser is shown. A single 20k-character
 # report would otherwise fill the summariser's own context window.
 _SUMMARY_CHARS_PER_MESSAGE = 1200
+
+# How long one instance may hold the right to fold a conversation. Longer than
+# a summarising call, so a slow model does not let a second instance start the
+# same fold; short enough that an instance killed mid-fold blocks the next
+# attempt for minutes rather than for ever.
+_SUMMARY_LEASE_SECONDS = 600
+
+# What a question gets for an answer when the run that should have produced one
+# did not survive. See :meth:`HistoryService.sweep_interrupted_runs`.
+INTERRUPTED_MESSAGE = (
+    "This run was interrupted before it finished — the server restarted while "
+    "the answer was being written. Ask again to get an answer."
+)
+
+# Interrupted runs healed per sweep. A backlog is unusual, and startup is not
+# the place to work through an unbounded one; whatever is left is picked up by
+# the next start.
+_SWEEP_LIMIT = 200
 
 # Folds ``(previous_summary, transcript) -> new summary``.
 Summarizer = Callable[[str, str], Awaitable[str]]
@@ -227,7 +249,26 @@ class HistoryService:
 
         Written in the same transaction as the conversation's counters, so the
         row count and ``message_count`` cannot disagree.
+
+        The conversation row is locked first, and that is not belt and braces.
+        A position is claimed by reading the highest one and writing the next,
+        and two writers doing that at once compute the same number —
+        ``uq_message_position`` then turns the loser's insert into an
+        IntegrityError. On the answer path that error is swallowed
+        (:func:`api.socket._record_answer` will not fail a request over it), so
+        the symptom is an answer the analyst watched arrive and cannot find
+        afterwards. Two browser tabs are enough at one instance; several
+        instances make it ordinary.
         """
+        # Held until this transaction commits, so the read of the last position
+        # and the write of the next one are one indivisible step — across
+        # processes, since the lock lives in Postgres.
+        await session.exec(
+            select(Conversation.id)
+            .where(Conversation.id == conversation.id)
+            .with_for_update()
+        )
+
         meta = dict(meta or {})
         if role == ROLE_USER and "run" not in meta:
             # The ledger numbers runs, not messages, and a client that has
@@ -358,7 +399,7 @@ class HistoryService:
         """The conversation's hot tail, from the cache if it is there."""
         cached = await self.cache.recent(conversation.id)
         if cached is not None:
-            return cached
+            return _in_order(cached)
 
         window = max(self.context_messages, settings.REDIS_HOT_WINDOW)
         result = await session.exec(
@@ -396,6 +437,84 @@ class HistoryService:
         )
         return (result.first() or 0) + 1
 
+    # ── Interrupted runs ─────────────────────────────────────────────────
+
+    async def sweep_interrupted_runs(
+        self, older_than_minutes: int = settings.STALE_RUN_MINUTES
+    ) -> int:
+        """Give an answer to questions whose run never came back.
+
+        A question is written before the graph starts and its answer after the
+        stream ends. Kill the process in between — a SIGKILL past the grace
+        period, a lost node — and only the first row exists, so the dossier
+        shows a question the analyst will wait for forever.
+
+        Shutdown drains in-flight runs, so this is for the deaths that gave no
+        warning. Run once per start, under an advisory lock, against questions
+        old enough that no run could still be working on one: the cutoff must
+        stay well clear of a slow answer on another instance, because marking a
+        live run as interrupted would be worse than the problem.
+
+        Returns how many were healed.
+        """
+        cutoff = utcnow() - timedelta(minutes=older_than_minutes)
+        later = aliased(Message)
+
+        async with SessionLocal() as session:
+            result = await session.exec(
+                select(Message)
+                .where(Message.role == ROLE_USER)
+                .where(col(Message.created_at) < cutoff)
+                # Nothing was ever written after it — not an answer, not
+                # another question. Anything else means the run landed.
+                .where(
+                    ~select(later.id)
+                    .where(later.conversation_id == Message.conversation_id)
+                    .where(col(later.seq) > Message.seq)
+                    .exists()
+                )
+                .order_by(col(Message.created_at))
+                .limit(_SWEEP_LIMIT)
+            )
+            stranded = list(result.all())
+
+        healed = 0
+        for question in stranded:
+            try:
+                async with SessionLocal() as session:
+                    conversation = await session.get(
+                        Conversation, question.conversation_id
+                    )
+                    if conversation is None:
+                        continue
+                    # Re-checked under the row lock `record_message` takes: an
+                    # instance that started answering between the query above
+                    # and now would have written the row we are about to
+                    # duplicate.
+                    if conversation.message_count > question.seq:
+                        continue
+
+                    await self.record_message(
+                        session,
+                        conversation,
+                        ROLE_ASSISTANT,
+                        INTERRUPTED_MESSAGE,
+                        status=STATUS_ERROR,
+                        meta={"error": "interrupted by a restart"},
+                    )
+                healed += 1
+            except Exception:
+                # One stubborn conversation should not stop the sweep, and the
+                # sweep should never stop a startup.
+                logger.exception(
+                    "Could not close out the interrupted run in conversation %s",
+                    question.conversation_id,
+                )
+
+        if healed:
+            logger.info("Closed out %d interrupted run(s) from a previous life", healed)
+        return healed
+
     # ── Rolling summary ──────────────────────────────────────────────────
 
     def schedule_summary(self, conversation_id: str) -> None:
@@ -419,13 +538,35 @@ class HistoryService:
         task.add_done_callback(_finished)
 
     async def _summarise(self, conversation_id: str) -> None:
-        """Compress everything but the recent tail into the rolling summary."""
+        """Compress everything but the recent tail into the rolling summary.
+
+        Three phases, and the shape is deliberate: read what is needed, close
+        the session, call the model, then reopen to write. Holding a pooled
+        connection across a call that takes tens of seconds is how a handful of
+        background folds exhaust a pool of ten and leave analysts waiting on a
+        connection to ask their next question.
+
+        The lease is what stops two instances folding the same dossier. It is
+        best effort — with no Redis, ``_summarising`` still dedupes within one
+        process, and the worst a duplicate fold costs is a wasted model call
+        against the same three columns, last write winning.
+        """
+        lease = f"summary:{conversation_id}"
+        if not await leases.acquire(lease, _SUMMARY_LEASE_SECONDS):
+            logger.debug(
+                "Another instance is already summarising %s — leaving it to them",
+                conversation_id,
+            )
+            return
+
         try:
+            # ── Read ─────────────────────────────────────────────────────
             async with SessionLocal() as session:
                 conversation = await session.get(Conversation, conversation_id)
                 if conversation is None:
                     return
 
+                previous_summary = conversation.summary
                 result = await session.exec(
                     select(Message)
                     .where(Message.conversation_id == conversation_id)
@@ -439,32 +580,71 @@ class HistoryService:
                 # The recent turns stay verbatim — they are what the next
                 # question is most likely to be about.
                 fold = pending[: -self.context_messages] or pending
+                through_seq = fold[-1].seq
+                folded = len(fold)
+                # Rendered before the session closes, while the rows are still
+                # attached and their columns loaded.
                 transcript = _transcript(fold)
 
-                summary = (await self.summarizer(conversation.summary, transcript)).strip()
-                if not summary:
-                    logger.warning(
-                        "Summariser returned nothing for %s — leaving history as it is",
+            # ── Fold, holding nothing ────────────────────────────────────
+            summary = (await self.summarizer(previous_summary, transcript)).strip()
+            if not summary:
+                logger.warning(
+                    "Summariser returned nothing for %s — leaving history as it is",
+                    conversation_id,
+                )
+                return
+
+            # ── Write ────────────────────────────────────────────────────
+            async with SessionLocal() as session:
+                conversation = await session.get(Conversation, conversation_id)
+                if conversation is None:  # deleted while the model was working
+                    return
+                if conversation.summary_through_seq >= through_seq:
+                    # Someone folded at least this far while we were away.
+                    # Ours is not newer, only later, so it is discarded rather
+                    # than allowed to walk the summary backwards.
+                    logger.debug(
+                        "Discarding a stale fold of %s (already summarised through %d)",
                         conversation_id,
+                        conversation.summary_through_seq,
                     )
                     return
 
                 conversation.summary = summary
-                conversation.summary_through_seq = fold[-1].seq
+                conversation.summary_through_seq = through_seq
                 conversation.summary_tokens = estimate_tokens(summary)
                 session.add(conversation)
                 await session.commit()
 
-                logger.info(
-                    "Summarised %s through seq %d (%d message(s) folded)",
-                    conversation_id,
-                    fold[-1].seq,
-                    len(fold),
-                )
+            logger.info(
+                "Summarised %s through seq %d (%d message(s) folded)",
+                conversation_id,
+                through_seq,
+                folded,
+            )
         except Exception:
             # A conversation that cannot be summarised still answers; it just
             # carries a longer unsummarised tail until the next attempt.
             logger.exception("Summarising conversation %s failed", conversation_id)
+        finally:
+            # Given back rather than left to expire, so the next question in
+            # this dossier can fold immediately if it needs to.
+            await leases.release(lease)
+
+
+def _in_order(messages: list[dict]) -> list[dict]:
+    """The tail by position, one entry per position.
+
+    The cache is appended to by whichever instance recorded the message, after
+    its own commit — so two instances writing to one dossier can push their
+    rows in the opposite order to the one they were assigned, and a retried
+    write can push the same row twice. Neither is worth a lock over a cache:
+    sorting a few dozen entries by ``seq`` costs nothing and means a reader
+    never has to trust how they arrived.
+    """
+    by_seq = {message["seq"]: message for message in messages}
+    return [by_seq[seq] for seq in sorted(by_seq)]
 
 
 def _cacheable(message: Message) -> dict:

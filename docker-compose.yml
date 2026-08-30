@@ -5,7 +5,12 @@
 #
 # Four services: the static workbench (which also reverse-proxies the API onto
 # its own origin), the API, Postgres for accounts and the message ledger, and
-# Redis for the conversation read cache.
+# Redis for the conversation read cache. A fifth, a shared vector store, is
+# behind the `scaled` profile and only needed to run more than one API:
+#
+#   docker compose up --build                                    one API
+#   CHROMA_HOST=chroma docker compose --profile scaled up \
+#       --scale backend=2                                        two
 #
 # The model is *not* in here. Ollama runs on the host, and the API reaches it
 # through host.docker.internal — see OLLAMA_BASE_URL below and the README.
@@ -53,8 +58,16 @@ services:
       OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text:latest}
 
       # Signs every token. Unset means a random key per restart, which logs
-      # everyone out on each deploy — generate one, see .env.example.
+      # everyone out on each deploy — generate one, see .env.example. It is
+      # also the first thing that breaks with two backends: each would sign
+      # with its own key and reject the other's tokens.
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
+
+      # Where the filings are indexed. Blank means the embedded store on this
+      # container's own disk — correct for one backend, wrong for two. Set it
+      # to `chroma` (with --profile scaled) and every backend shares one store.
+      CHROMA_HOST: ${CHROMA_HOST:-}
+      CHROMA_PORT: ${CHROMA_PORT:-8000}
 
       # The browser talks to the frontend's origin, and nginx forwards from
       # there, so that origin is the one the API must allow.
@@ -68,6 +81,38 @@ services:
     extra_hosts:
       # Docker Desktop provides this name; on Linux it has to be asked for.
       - "host.docker.internal:host-gateway"
+    networks: [cfa]
+
+  # ── Vector store (optional here, required for more than one backend) ─────
+  # Not started by `docker compose up`: with one backend the embedded store in
+  # the API container is simpler and keeps the filings in `filing-data`.
+  #
+  # It exists for the check docs/SCALING.md recommends — running the stack the
+  # way a cluster runs it:
+  #
+  #     CHROMA_HOST=chroma docker compose --profile scaled up --scale backend=2
+  #
+  # Without CHROMA_HOST each backend indexes into its own container filesystem,
+  # so a filing uploaded through one is invisible to the other. That is the bug
+  # this service exists to remove, not a quirk of compose.
+  chroma:
+    profiles: [scaled]
+    image: chromadb/chroma:1.5.9
+    restart: unless-stopped
+    environment:
+      IS_PERSISTENT: "TRUE"
+      PERSIST_DIRECTORY: /data
+      ANONYMIZED_TELEMETRY: "FALSE"
+    volumes:
+      - chroma-data:/data
+    healthcheck:
+      # bash, not sh: the image ships no curl or wget, /bin/sh is dash, and
+      # /dev/tcp is a bash builtin. v2 because Chroma 1.x retired /api/v1.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8000 && printf 'GET /api/v2/heartbeat HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     networks: [cfa]
 
   # ── Database ─────────────────────────────────────────────────────────────
@@ -115,8 +160,11 @@ services:
 
 volumes:
   postgres-data:
+  # The embedded vector store, used when CHROMA_HOST is unset.
   filing-data:
   filing-logs:
+  # The shared vector store, used when it is set.
+  chroma-data:
 
 networks:
   cfa:

@@ -1,0 +1,19 @@
+# Placeholder kept out of the kustomization on purpose — see the note below.
+#
+# docs/SCALING.md §13 suggests a PodDisruptionBudget with minAvailable: 1.
+# That is right for a real cluster and actively unhelpful on a one-node
+# minikube: `minikube stop`, a node drain, or an addon reconfigure will block
+# on it, and there is nowhere for the evicted pod to go anyway.
+#
+# On a multi-node cluster, add this file to kustomization.yaml's resources.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cfa-backend
+  labels:
+    app.kubernetes.io/part-of: corporate-filing-analyzer
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cfa-backend

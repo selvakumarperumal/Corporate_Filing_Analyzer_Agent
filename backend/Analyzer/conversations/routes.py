@@ -136,7 +136,7 @@ async def delete_conversation(
     documents it can no longer cite.
     """
     deleted = await history.delete_conversation(session, user.id, session_id)
-    dropped = analysis.delete_session(scoped_session_id(user.id, session_id))
+    dropped = await analysis.delete_session(scoped_session_id(user.id, session_id))
 
     return {
         "status": "ok",

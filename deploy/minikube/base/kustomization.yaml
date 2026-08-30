@@ -1,0 +1,32 @@
+# The whole stack. Order here does not matter — kubectl sorts by kind, so the
+# Namespace, ConfigMaps and Services are created before anything that needs
+# them.
+#
+# Applied through the wrapper one directory up:
+#
+#     kubectl apply -k deploy/minikube
+#
+# The Secret is deliberately not here. It holds a signing key that should be
+# generated, not committed, so it is created out of band — `bootstrap.sh` does
+# it, or see the README. Applying this without it leaves the backend and
+# postgres pods in CreateContainerConfigError until the Secret exists, at
+# which point they start on their own.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: cfa
+
+resources:
+  - namespace.yaml
+  - config.yaml
+  - postgres.yaml
+  - redis.yaml
+  - chroma.yaml
+  - backend.yaml
+  - frontend.yaml
+  - ingress.yaml
+
+# Deliberately not listed above:
+#   secret.example.yaml  — a template; the real Secret is created separately
+#   ollama.yaml          — the model runs on the host, not in the cluster
+#   pdb.yaml             — a PodDisruptionBudget blocks drains on one node

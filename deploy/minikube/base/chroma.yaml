@@ -1,0 +1,103 @@
+# The filings. One store, every API pod a client of it over HTTP.
+#
+# This is what makes the API stateless, and stateless is what more than one
+# replica needs — docs/SCALING.md, Break #2. Without it each pod keeps its own
+# embedded copy on its own disk, so a filing uploaded through one is simply not
+# there for another, and pointing both at one volume corrupts the SQLite index
+# rather than sharing it.
+#
+# The singleton with the volume is now *this* deployment rather than the API,
+# and it keeps one replica and `Recreate` for exactly the reason the API used
+# to: two processes must not have the same index open for writing.
+#
+# The image tag tracks the `chromadb` version in backend/Analyzer/uv.lock
+# (1.5.9). Client and server speak a versioned API, so bump both or neither.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chroma
+  labels:
+    app.kubernetes.io/name: chroma
+    app.kubernetes.io/part-of: corporate-filing-analyzer
+spec:
+  selector:
+    app.kubernetes.io/name: chroma
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chroma-data
+  labels:
+    app.kubernetes.io/part-of: corporate-filing-analyzer
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chroma
+  labels:
+    app.kubernetes.io/name: chroma
+    app.kubernetes.io/part-of: corporate-filing-analyzer
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: chroma
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: chroma
+        app.kubernetes.io/part-of: corporate-filing-analyzer
+    spec:
+      # Kubernetes injects a legacy Docker-links variable per Service into
+      # every pod in the namespace — the `chroma` Service alone produces
+      # CHROMA_PORT=tcp://10.x.x.x:8000. Chroma's own server reads CHROMA_*
+      # as configuration and panics on it, and any app that names a setting
+      # after a Service is one rename away from the same surprise. Nothing
+      # here uses those variables; every setting arrives from cfa-config.
+      enableServiceLinks: false
+      containers:
+        - name: chroma
+          image: chromadb/chroma:1.5.9
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: IS_PERSISTENT
+              value: "TRUE"
+            - name: PERSIST_DIRECTORY
+              value: /data
+            - name: ANONYMIZED_TELEMETRY
+              value: "FALSE"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            # v2 — Chroma 1.x retired the /api/v1 routes. If this 410s, the
+            # image and the client version have drifted apart.
+            httpGet: { path: /api/v2/heartbeat, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /api/v2/heartbeat, port: http }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests: { cpu: "100m", memory: 512Mi }
+            limits: { cpu: "2", memory: 2Gi }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: chroma-data

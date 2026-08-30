@@ -10,10 +10,17 @@ A run is also where the ledger is written. The question is recorded before the
 graph starts and the answer once it finishes, each in its own short-lived
 database session — an answer can take a minute, and a pooled connection held
 open across it is a connection nothing else can use.
+
+That gap between the two rows is what makes shutdown interesting. A process
+that stops in the middle of it leaves a question with no answer beside it, and
+more instances mean more rollouts mean that happening routinely rather than
+rarely. So runs in progress are tracked here, and :func:`drain` lets shutdown
+wait for them to finish before the process goes.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -37,6 +44,39 @@ logger = logging.getLogger(__name__)
 # Used when a filing is attached with no typed question — the router still
 # needs something to classify.
 FALLBACK_QUERY = "Provide an executive summary and financial overview of this filing."
+
+# Answers currently streaming, one task each. Held strongly, which also keeps
+# asyncio from collecting a run mid-await, and read by :func:`drain`.
+_in_flight: set[asyncio.Task] = set()
+
+
+async def drain(timeout: float) -> int:
+    """Wait for the answers still being written. Returns how many did not land.
+
+    Called from the app's shutdown, after new work has stopped arriving. The
+    point is the ledger: a run allowed to finish writes its answer row, and a
+    run cut off leaves the question stranded until the next start sweeps it
+    (:meth:`conversations.service.HistoryService.sweep_interrupted_runs`).
+
+    Whatever is still running when the timeout expires is left alone rather
+    than cancelled — the process is about to exit either way, and cancelling a
+    run halfway cannot make its answer any more written.
+    """
+    running = {task for task in _in_flight if not task.done()}
+    if not running:
+        return 0
+
+    logger.info("Waiting up to %.0fs for %d run(s) to finish", timeout, len(running))
+    done, pending = await asyncio.wait(running, timeout=timeout)
+    if pending:
+        logger.warning(
+            "%d run(s) did not finish in time — their answers are lost and the "
+            "questions will be closed out on the next start",
+            len(pending),
+        )
+    else:
+        logger.info("All %d in-flight run(s) finished", len(done))
+    return len(pending)
 
 
 def register_handlers(
@@ -77,6 +117,10 @@ def register_handlers(
     async def query(sid: str, data: dict[str, Any]) -> None:
         """Run a question through the graph, stream it back, and record it.
 
+        Registered in ``_in_flight`` for as long as it runs, so a shutdown can
+        wait for the answer to reach the ledger instead of stopping between the
+        question row and the answer row.
+
         Payload::
 
             query:      the analyst's question (may be empty if a file was
@@ -94,6 +138,17 @@ def register_handlers(
         that goes back is the client's own — the account it is scoped under on
         the backend is not the browser's business.
         """
+        task = asyncio.current_task()
+        if task is not None:
+            _in_flight.add(task)
+        try:
+            await _answer(sid, data)
+        finally:
+            if task is not None:
+                _in_flight.discard(task)
+
+    async def _answer(sid: str, data: dict[str, Any]) -> None:
+        """The body of one ``query``, split out only so it can be tracked."""
         question = (data.get("query") or "").strip() or FALLBACK_QUERY
         session_id = (data.get("session_id") or "").strip()
         title = (data.get("title") or "").strip()

@@ -28,6 +28,19 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     CHROMA_COLLECTION: str = "corporate_filings"
 
+    # ── Vector store ─────────────────────────────────────────────────────
+    # Blank means embedded: a Chroma directory on this process's own disk,
+    # which is correct for one instance and wrong for two. An embedded store
+    # is a library reading a local path, so a second process gets a second,
+    # private copy — a filing uploaded through one is invisible to the other,
+    # and pointing both at one shared volume corrupts the SQLite index instead.
+    #
+    # Set CHROMA_HOST and every instance talks to one store over HTTP, which
+    # is what makes the API stateless and safe to replicate.
+    CHROMA_HOST: str = ""
+    CHROMA_PORT: int = 8000
+    CHROMA_SSL: bool = False
+
     # ── Database ─────────────────────────────────────────────────────────
     # Postgres, always. The schema leans on it — ``jsonb`` for message
     # metadata, foreign keys that are enforced without being asked, a pool in
@@ -62,6 +75,29 @@ class Settings(BaseSettings):
     REDIS_KEY_PREFIX: str = "cfa"
     REDIS_HOT_WINDOW: int = 40
     REDIS_TTL_SECONDS: int = 3600
+
+    # ── Running more than one instance ───────────────────────────────────
+    # A Socket.IO client manager, so an ``emit`` from one instance can reach a
+    # connection held by another. Not needed today — every event this app
+    # sends goes to the asker, from the very process holding their connection
+    # — and it costs a Redis round trip per emit, so it stays off until the
+    # first broadcast (a shared dossier, the same analyst on two devices)
+    # makes it necessary. ``redis://…`` turns it on.
+    SOCKETIO_MESSAGE_QUEUE_URL: str = ""
+
+    # How long shutdown waits for answers that are still streaming before it
+    # gives up on them. A run killed halfway leaves a question in the ledger
+    # with no answer beside it, so this wants to be longer than a slow answer
+    # — and shorter than the platform's own patience (Kubernetes'
+    # terminationGracePeriodSeconds, which defaults to a useless 30).
+    SHUTDOWN_DRAIN_SECONDS: int = 120
+
+    # A question this old with no answer after it was interrupted by something
+    # that did not come back — a SIGKILL, a lost node. Swept at startup and
+    # marked failed, so the dossier does not show a question that will never
+    # be answered. Generous on purpose: it must never overtake a run that is
+    # merely slow, on another instance, right now.
+    STALE_RUN_MINUTES: int = 30
 
     # ── Auth ─────────────────────────────────────────────────────────────
     # JWT_SECRET_KEY signs both token kinds. Leave it unset only in local

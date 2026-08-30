@@ -1,0 +1,214 @@
+# The API — FastAPI and Socket.IO under one uvicorn.
+#
+# Stateless, and every part of that is load-bearing:
+#
+#   the filings   in the Chroma service (chroma.yaml), not on this pod's disk
+#   the ledger    in Postgres
+#   the cache     in Redis
+#   the signing   from one Secret, so a token minted here is valid everywhere
+#   the sockets   pinned by the ingress cookie, so a connection stays put
+#
+# What is left in a pod's memory is the compiled graph and the model clients,
+# which are rebuilt identically per pod, and the socket sessions, which are
+# only ever read by the pod holding that connection. So `replicas` is just a
+# number here — 1, 2 or 6 all behave the same. See docs/SCALING.md.
+#
+# The Service is named `backend` deliberately: frontend/nginx.conf proxies to
+# `http://backend:8000`, and that image is used here unchanged.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  labels:
+    app.kubernetes.io/name: cfa-backend
+    app.kubernetes.io/part-of: corporate-filing-analyzer
+spec:
+  selector:
+    app.kubernetes.io/name: cfa-backend
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cfa-backend
+  labels:
+    app.kubernetes.io/name: cfa-backend
+    app.kubernetes.io/part-of: corporate-filing-analyzer
+spec:
+  # Two, so a node drain or a rollout costs a reconnect rather than an outage.
+  # Not for throughput — every pod queues against the same Ollama, and adding
+  # pods in front of one model host only lengthens that queue
+  # (docs/SCALING.md §14). Availability is the reason to run more than one.
+  replicas: 2
+  # maxUnavailable: 0 — the replacement is serving before the pod it replaces
+  # is asked to leave, so there is always somewhere for a reconnect to land.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cfa-backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cfa-backend
+        app.kubernetes.io/part-of: corporate-filing-analyzer
+    spec:
+      # docs/SCALING.md §12. The default is 30 seconds — shorter than a single
+      # answer on a local model, so the default cuts runs in half and leaves a
+      # question in the ledger that never gets an answer row. This is the
+      # preStop sleep (15) plus the app's own drain of in-flight answers
+      # (SHUTDOWN_DRAIN_SECONDS) plus margin. Whatever still does not finish is
+      # closed out by the next pod to start, so the dossier never shows a
+      # question that will be answered by nobody.
+      # Kubernetes injects a legacy Docker-links variable per Service into
+      # every pod in the namespace — the `chroma` Service alone produces
+      # CHROMA_PORT=tcp://10.x.x.x:8000. Chroma's own server reads CHROMA_*
+      # as configuration and panics on it, and any app that names a setting
+      # after a Service is one rename away from the same surprise. Nothing
+      # here uses those variables; every setting arrives from cfa-config.
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 180
+      securityContext:
+        # The image's own unprivileged account.
+        runAsUser: 999
+        runAsGroup: 999
+        runAsNonRoot: true
+      initContainers:
+        # The app's lifespan runs init_db() before it serves anything, and
+        # exits if Postgres is not there. Waiting here turns a CrashLoopBackOff
+        # that resolves itself into a pod that simply starts once, in order.
+        - name: wait-for-postgres
+          image: postgres:17-bookworm
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h postgres -p 5432 -U "$POSTGRES_USER" -d "$POSTGRES_DB"; do
+                echo "waiting for postgres…"
+                sleep 2
+              done
+          envFrom:
+            - configMapRef:
+                name: cfa-postgres
+          resources:
+            requests: { cpu: "10m", memory: 32Mi }
+            limits: { cpu: "200m", memory: 128Mi }
+        # VectorService heartbeats the store in its constructor, so a missing
+        # Chroma is an import-time crash rather than a degraded start — a
+        # deliberate choice (a store you cannot reach is a broken deployment,
+        # and it should say so during the rollout). Waiting here turns the
+        # resulting CrashLoopBackOff into a pod that starts once, in order.
+        - name: wait-for-chroma
+          image: cfa-backend:latest
+          imagePullPolicy: Never
+          envFrom:
+            - configMapRef:
+                name: cfa-config
+          command:
+            - python
+            - -c
+            - |
+              import os, sys, time, urllib.request
+              host = os.environ.get("CHROMA_HOST", "").strip()
+              if not host:
+                  # Blank is a real configuration, not a mistake: it selects the
+                  # embedded store, which needs nothing to wait for. Only valid
+                  # at one replica — see the header of this file.
+                  print("CHROMA_HOST is unset — embedded store, nothing to wait for")
+                  sys.exit(0)
+              url = "http://%s:%s/api/v2/heartbeat" % (
+                  host, os.environ.get("CHROMA_PORT", "8000"))
+              for _ in range(150):
+                  try:
+                      if urllib.request.urlopen(url, timeout=3).status == 200:
+                          sys.exit(0)
+                  except Exception as error:
+                      print("waiting for chroma at %s: %s" % (url, error), flush=True)
+                  time.sleep(2)
+              sys.exit("chroma never came up at %s" % url)
+          resources:
+            requests: { cpu: "10m", memory: 64Mi }
+            limits: { cpu: "500m", memory: 256Mi }
+      containers:
+        - name: backend
+          image: cfa-backend:latest
+          # Never: the image is built straight into minikube's daemon (see the
+          # README). With `Always` the kubelet would go looking for it in a
+          # registry that has never heard of it.
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: cfa-config
+          env:
+            # docs/SCALING.md, Break #1. The single most important line in this
+            # folder: unset, every pod signs with its own throwaway key, and a
+            # restart logs everybody out. Grep a running pod for
+            # "JWT_SECRET_KEY is not set" — if it is there, auth is unreliable.
+            - name: JWT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: cfa-secrets
+                  key: jwt-secret
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: cfa-secrets
+                  key: database-url
+          volumeMounts:
+            # Rotated log files, and nothing else — this pod keeps no state.
+            # The console handler already writes to stdout, so `kubectl logs`
+            # works without this; it exists because the logging config opens
+            # the files whether or not anyone reads them.
+            - name: logs
+              mountPath: /app/logs
+          # Importing the graph and the model clients takes a while, and the
+          # lifespan then creates tables and prunes orphaned collections.
+          # The startup probe gives all of that up to 3 minutes without the
+          # liveness probe deciding a slow start is a hang.
+          startupProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 30
+            timeoutSeconds: 5
+            # Generous on purpose: the event loop can be busy streaming a long
+            # answer, and restarting the pod that is mid-answer is precisely
+            # the failure this deployment is trying to avoid.
+            failureThreshold: 5
+          lifecycle:
+            preStop:
+              exec:
+                # Endpoint removal is asynchronous: without this pause the
+                # ingress can still be sending new connections to a pod that
+                # has already begun shutting down.
+                command: ["sh", "-c", "sleep 15"]
+          resources:
+            # The model runs in Ollama, not here, so the CPU request is modest.
+            # Memory is not: langchain, chromadb and the embedding client are
+            # all resident, and embedding a long filing is done in this process.
+            requests: { cpu: "250m", memory: 768Mi }
+            limits: { cpu: "2", memory: 2Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: logs
+          emptyDir: {}
