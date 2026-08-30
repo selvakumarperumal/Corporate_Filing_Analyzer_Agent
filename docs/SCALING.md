@@ -28,6 +28,7 @@ describes.
 | --- | --- |
 | **this file** | what breaks with N instances, and the fix for each |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | how to deploy it — locally or on Kubernetes — and how to test it |
+| [TESTING-SCALING.md](TESTING-SCALING.md) | how to provoke each break below and watch it happen |
 | [`deploy/minikube/`](../deploy/minikube/) | all of it, applied — manifests you can run |
 | [`deploy/checks/`](../deploy/checks/) | scripts that prove a deployment is one of the good ones |
 | [SOCKETIO.md](SOCKETIO.md#running-more-than-one-worker) | the short version, in the Socket.IO guide |
@@ -1002,3 +1003,9 @@ kubectl -n cfa set env deploy/cfa-backend CHROMA_HOST-       # and back
 [DEPLOYMENT.md §8](DEPLOYMENT.md#8-breaking-it-on-purpose) does this for the
 shared store, the shared secret, Redis, Chroma and Ollama in turn. A check you
 have never seen fail is a check you do not know works.
+
+For the rest — stickiness, drain timing, the schema race, pool exhaustion, the
+summary lease, and the negatives for everything the scripts cover —
+[TESTING-SCALING.md](TESTING-SCALING.md) is the same idea taken through every
+break in this file, by hand: which rig can express each fault, how to provoke
+it, and the single line of output that says which way it went.

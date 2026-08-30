@@ -417,7 +417,9 @@ It writes and deletes its own accounts. Point it at a development database.
 | Rollout survival | — | ✅ |
 | Drain on shutdown | — | ✅ |
 
-The last three need Kubernetes and are worth doing by hand once.
+The last three need Kubernetes and are worth doing by hand once, and
+[TESTING-SCALING.md](TESTING-SCALING.md) takes each of them — and everything
+else in [SCALING.md](SCALING.md) — through its negative as well.
 
 **Sticky handshake.** Block WebSocket in the browser's devtools so the client
 falls back to polling, then reload. Pass: the polling requests continue. Fail: a
@@ -608,6 +610,7 @@ accounts, the ledger and the filings together.
 ## See also
 
 - [SCALING.md](SCALING.md) — why each of these breaks, in detail
+- [TESTING-SCALING.md](TESTING-SCALING.md) — provoking each break by hand, including the ones no script covers
 - [`deploy/minikube/README.md`](../deploy/minikube/README.md) — what each manifest does, and why
 - [`deploy/checks/README.md`](../deploy/checks/README.md) — the scripts
 - [DB-OPERATIONS.md](DB-OPERATIONS.md) — every read and write the app makes

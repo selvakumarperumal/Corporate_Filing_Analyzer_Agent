@@ -38,6 +38,11 @@ shape, what to test in each, and how to break each part on purpose to prove the
 tests would have caught it — see **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**,
 with the runnable checks in **[deploy/checks/](deploy/checks/)**.
 
+And to test the scaling problems yourself, by hand, one at a time —
+**[docs/TESTING-SCALING.md](docs/TESTING-SCALING.md)** is the playbook: three
+rigs to build, how to provoke each break, the one line of output that tells you
+which way it went, and the tests that pass without having tested anything.
+
 The database has its own guide too:
 **[docs/DB-OPERATIONS.md](docs/DB-OPERATIONS.md)** covers the schema and every
 read and write the app makes — what each question stores, how history is read
@@ -143,7 +148,8 @@ Corporate_Filing_Analyzer_Agent/
 │   ├── FRONTEND-SOCKETIO.md    # What the backend does for each workbench operation, handler by handler
 │   ├── DB-OPERATIONS.md        # The schema, and every database read and write the app makes
 │   ├── SCALING.md              # Running more than one instance: what breaks, and the fix for each
-│   └── DEPLOYMENT.md           # Deploying it locally or on Kubernetes, and testing both
+│   ├── DEPLOYMENT.md           # Deploying it locally or on Kubernetes, and testing both
+│   └── TESTING-SCALING.md      # Provoking each scaling break by hand, and reading the result
 ├── deploy/
 │   └── cnpg-cluster.yaml       # The same database as a CloudNativePG Cluster (Kubernetes)
 ├── backend/
