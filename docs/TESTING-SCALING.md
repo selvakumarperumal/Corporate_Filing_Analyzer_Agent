@@ -692,7 +692,20 @@ The word is borrowed from aircraft, and the analogy is exact: when an airport
 closes, planes already in the air still have to land. You cannot un-take-off a
 run. You either let it finish, or it is lost.
 
-##### Third: where a run lives, in pod terms
+##### Third: what gets saved, and when
+
+One question is **two** writes to the database, far apart:
+
+| Time | What is happening | Saved? |
+| --- | --- | --- |
+| 0s | analyst presses send | **yes** — the question row |
+| 0–60s | the model writes the answer, word by word, streaming to the browser | no, not yet |
+| 60s | the last word arrives | **yes** — the answer row |
+
+For that whole minute the database holds a question with no answer. **That is
+normal** — while the run is alive.
+
+##### Fourth: where a run lives, in pod terms
 
 This is the part that makes the rest obvious, so it is worth being literal.
 
@@ -795,55 +808,6 @@ What it prevents is the **missing answer row**. And a reconnect is cheap: her
 browser gets a new `sid` on a surviving pod and the dossier is read from
 Postgres, which every pod can see.
 
-##### The one idea underneath all of this
-
-> A pod cannot look inside another pod's memory.
-
-That single sentence is the drain (only `aaaa` can finish `aaaa`'s run), the
-sweep (a new pod cannot tell a dead run from a live one elsewhere — next row),
-and the sticky cookie (only the pod holding a `sid` knows that `sid`). Every
-break in this section is a consequence of it, which is why the fixes are all
-either "write it to Postgres" or "keep the client on the pod that knows".
-##### What gets saved, and when
-
-One question is **two** writes to the database, far apart:
-
-| Time | What is happening | Saved? |
-| --- | --- | --- |
-| 0s | analyst presses send | **yes** — the question row |
-| 0–60s | the model writes the answer, word by word, streaming to the browser | no, not yet |
-| 60s | the last word arrives | **yes** — the answer row |
-
-For that whole minute the database holds a question with no answer. **That is
-normal** — while the run is alive.
-
-##### A concrete example, second by second
-
-Priya asks *"summarise the risk factors"* at **14:30:00**. Someone starts a
-deploy at **14:30:20**, twenty seconds later.
-
-**Without the drain:**
-
-| Clock | What Priya sees | What the server does | In the database |
-| --- | --- | --- | --- |
-| 14:30:00 | her question appears | writes the question as message 7, starts the run | Q7 |
-| 14:30:05 | words start appearing | the model is generating | Q7 |
-| 14:30:20 | words still appearing | **`SIGTERM` arrives** — the deploy | Q7 |
-| 14:30:20 | **text freezes mid-sentence** | the process exits instantly; the run dies with it | Q7 |
-| 14:35:00 | still spinning | (this server no longer exists) | Q7 |
-| next week | still spinning | — | **Q7, alone, forever** |
-
-**With the drain:**
-
-| Clock | What Priya sees | What the server does | In the database |
-| --- | --- | --- | --- |
-| 14:30:20 | nothing changes | `SIGTERM` — stops accepting **new** work, waits for the 1 run it is holding | Q7 |
-| 14:30:35 | words still appearing | still waiting | Q7 |
-| 14:31:00 | the answer finishes normally | writes the answer as message 8 — **then** exits | Q7 + A8 |
-
-The drain is the airport rule: **no new take-offs, but the planes already in the
-air get to land.**
-
 ##### "Why doesn't it just retry?"
 
 This is the question everyone asks, and the answer is what makes the row matter:
@@ -856,22 +820,139 @@ This is the question everyone asks, and the answer is what makes the row matter:
   a question that is *being answered right now on another server*. (That is the
   sweep, in the next row, and it is why it waits 30 minutes.)
 
+##### The solution, in pod terms
+
+Everything above is the problem. Here is the fix seen the same way — and it is
+one idea, applied three times.
+
+**The answer starts in the wrong place.** While the model is writing, the
+answer exists only as text in one pod's RAM. RAM dies with the pod. Postgres
+does not, and every pod can read it. So the whole job is: **get the answer out
+of RAM and into Postgres before that pod disappears.**
+
+```mermaid
+flowchart LR
+  subgraph P["Pod aaaa — private RAM"]
+    R["the run<br/>holding the answer text"]
+  end
+  R -->|"the only way out"| DB[("Postgres<br/>every pod can read this")]
+  R -.->|"if the pod exits first"| G["gone — nothing<br/>can recover it"]
+  classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
+  classDef bad fill:#fdecea,stroke:#c0392b,color:#7b1c14
+  classDef good fill:#e8f6ec,stroke:#1e8449,color:#14532d
+  class R step
+  class DB good
+  class G bad
+```
+
+**Fix 1 — the drain: give the run time to make that move.**
+
+The pod is leaving either way. The drain simply refuses to exit while
+`_in_flight` still has a task in it, which is exactly long enough for the
+answer to reach Postgres.
+
 ```mermaid
 flowchart TB
-  T["SIGTERM arrives<br/>20s into a 60s answer"] --> N["no drain: exit immediately"]
-  T --> D["drain: no new work,<br/>wait for the 1 run in flight"]
-  N --> N2["question saved, answer never saved<br/>Priya waits forever"]
-  D --> D2["answer saved at 60s<br/>then the server exits"]
+  S["14:30:20 — SIGTERM arrives at pod aaaa"] --> Q{"is _in_flight empty?"}
+  Q -->|"no drain: never asked"| X1["pod exits at 14:30:20<br/>RAM erased mid-answer"]
+  X1 --> D1[("Postgres:<br/>Q7 alone, forever")]
+  Q -->|"drain: 1 task, so wait"| W["pod stays alive, still streaming<br/>Waiting up to 120s for 1 run(s)"]
+  W --> F["14:31:00 — task finishes,<br/>writes the answer row"]
+  F --> D2[("Postgres:<br/>Q7 + A8")]
+  D2 --> X2["*now* the pod exits<br/>RAM erased, nothing lost"]
   classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
   classDef bad fill:#fdecea,stroke:#c0392b,color:#7b1c14
   classDef good fill:#e8f6ec,stroke:#1e8449,color:#14532d
   classDef warn fill:#fff4e0,stroke:#b7791f,color:#7c4a03
-  classDef fix fill:#eef2ff,stroke:#4f46e5,color:#312e81
-  class T warn
-  class N,N2 bad
-  class D,D2 good
+  class S step
+  class Q warn
+  class X1,D1 bad
+  class W,F,D2,X2 good
 ```
 
+**Fix 2 — the grace period: make the kubelet allow the wait.**
+
+There is a third actor in the room, and it is holding an axe. The kubelet does
+not know or care that pod `aaaa` is in the middle of something.
+
+```mermaid
+flowchart TB
+  T["SIGTERM to pod aaaa"] --> P["pod: I need until 14:31:00"]
+  T --> K["kubelet: starts its own timer"]
+  K -->|"grace 30s"| K1["14:30:50 SIGKILL<br/>pod erased mid-drain"]
+  K1 --> B1[("Postgres:<br/>Q7 alone — the drain<br/>changed nothing")]
+  K -->|"grace 180s"| K2["timer never fires<br/>the pod leaves on its own at 14:31:00"]
+  K2 --> B2[("Postgres:<br/>Q7 + A8")]
+  classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
+  classDef bad fill:#fdecea,stroke:#c0392b,color:#7b1c14
+  classDef good fill:#e8f6ec,stroke:#1e8449,color:#14532d
+  classDef warn fill:#fff4e0,stroke:#b7791f,color:#7c4a03
+  class T,P step
+  class K warn
+  class K1,B1 bad
+  class K2,B2 good
+```
+
+**Fix 3 — the sweep: repair it later, through the one thing pods share.**
+
+When the pod is killed outright there is no move to make — the answer was
+erased with the RAM. So the fix cannot be about that pod at all. Instead a
+*different* pod, starting later, reads the shared database, spots the damage,
+and writes the missing row itself.
+
+```mermaid
+flowchart TB
+  subgraph dead["Pod aaaa — SIGKILL, no code ran"]
+    R["the run and the answer text"]
+  end
+  R -.->|"erased, never written"| DB[("Postgres<br/>Q7 alone")]
+  subgraph fresh["Pod cccc — started 30+ minutes later"]
+    S["sweep: read Postgres"]
+  end
+  DB --> S
+  S --> W["Q7 with nothing after it,<br/>and far too old to be live"]
+  W --> DB2[("Postgres:<br/>Q7 + A8 = interrupted")]
+  classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
+  classDef bad fill:#fdecea,stroke:#c0392b,color:#7b1c14
+  classDef good fill:#e8f6ec,stroke:#1e8449,color:#14532d
+  class R bad
+  class DB bad
+  class S,W step
+  class DB2 good
+```
+
+Notice what pod `cccc` did **not** need: it never learned anything about pod
+`aaaa`, never contacted it, never inspected it. It could not have — `aaaa` no
+longer exists. It only read the state they both share. That is the only kind of
+repair a pod can perform on another pod's damage, and it is why the fix is
+"look at Postgres at startup" rather than anything cleverer.
+
+**All three, in one line each**
+
+| Row | The fix, said in pods |
+| --- | --- |
+| **4a drain** | the dying pod stays alive long enough to move its answer from RAM into Postgres |
+| **4c grace period** | the kubelet is told to permit that wait, instead of killing the pod half-way through it |
+| **4b sweep** | a *different* pod, later, repairs what never made it out — using the only thing pods share |
+##### The one idea underneath all of this
+
+> A pod cannot look inside another pod's memory.
+
+That single sentence is the drain (only `aaaa` can finish `aaaa`'s run), the
+sweep (a new pod cannot tell a dead run from a live one elsewhere — next row),
+and the sticky cookie (only the pod holding a `sid` knows that `sid`).
+
+And because every problem is that sentence, every fix is one of exactly two
+answers to it:
+
+| The fix | Rows that use it |
+| --- | --- |
+| **Move it into Postgres** — the one thing all pods can read | 4a drain (before the pod dies), 4b sweep (after it died), 5 message positions, 6/7 startup locks |
+| **Keep the client on the pod that already has it** | 3 sticky handshake |
+
+That is the whole design. When you meet a new failure in this app, the useful
+first question is not "what broke" but *"was something important living in one
+pod's RAM?"* — and the fix will be one of those two rows.
 ##### Settings involved
 
 | Setting | What it does | Default | Get it wrong and… |
@@ -952,7 +1033,6 @@ deploy. With one instance you only paid this at restarts.
 wait really happens. → [§7](#7-break-4--the-drain-and-the-sweep)
 
 ---
-
 #### 4 · In-flight runs — the sweep
 
 **Complaint:** *"That question from Tuesday is still thinking."*
