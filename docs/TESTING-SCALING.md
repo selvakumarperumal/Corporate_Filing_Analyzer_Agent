@@ -168,12 +168,30 @@ the same way:
 
 - **Complaint** — what a user would actually say when this breaks.
 - **In one sentence** — the whole problem, no jargon.
+- **When it happens** — the event that triggers it: a rolling deploy, a
+  scale-up, a crash, an upload. This is the fastest way to work out whether a
+  row explains something you saw yesterday.
 - **How it works** — the mechanism, in small steps and small tables.
-- **Settings involved** — the environment variables, what each one does, and
-  what happens if it is wrong.
+- **Settings involved** — the environment variables, what each one does, its
+  default, and what happens if it is wrong.
 - **Example** — a walk-through with real numbers, log lines or SQL.
 
-If you read nothing else in a block, read *In one sentence*.
+If you read nothing else in a block, read *In one sentence* and *When it
+happens*.
+
+**Colours in the diagrams** are consistent throughout:
+
+| | Means |
+| --- | --- |
+| 🔴 red | the broken path — what happens with the handling missing |
+| 🟢 green | the correct path — what happens with it in place |
+| 🟠 amber | the moment it is decided: a branch, a timer, or a cost you pay |
+| 🔵 blue | the setting or component that fixes it |
+
+**Which ones bite at deploy time.** If you are here because something went
+wrong during a rollout, read rows **4a (drain)**, **4c (grace period)**,
+**6/7 (startup jobs)** and **10 (connections)** first — those four are all
+triggered by the deploy itself.
 
 ---
 
@@ -184,6 +202,10 @@ happens again."*
 
 **In one sentence.** Each server invents its own signature at startup, so the
 login ticket one server hands out is unreadable to all the others.
+
+> **When it happens:** the moment there is more than one replica — from then on
+> every request is a coin toss. Also on **every restart** even with a single
+> replica, because the random key dies with the process and signs everyone out.
 
 **How it works.** Signing in gives the browser a ticket with a signature on it.
 Only something holding the signing key can make that signature, or check it.
@@ -203,11 +225,13 @@ sequenceDiagram
   participant B as Pod B, key z9y8
   U->>A: sign in
   A-->>U: ticket signed a1b2
-  U->>B: next request, same ticket
-  B-->>U: 401, that signature is not mine
-  U->>B: backup plan, the refresh ticket
-  B-->>U: 401, also signed a1b2
-  Note over U,B: two rejections = back to the login page
+  rect rgba(192, 57, 43, 0.10)
+    U->>B: next request, same ticket
+    B-->>U: 401, that signature is not mine
+    U->>B: backup plan, the refresh ticket
+    B-->>U: 401, also signed a1b2
+    Note over U,B: two rejections = back to the login page
+  end
 ```
 
 **Settings involved**
@@ -249,6 +273,11 @@ I just uploaded."*
 **In one sentence.** The uploaded filing is saved on one server's own disk, so
 any question answered by a different server is answered without it.
 
+> **When it happens:** on the first question after an upload, once there is more
+> than one replica. With an embedded store it also bites on **every rollout**:
+> the replacement pod starts with an empty disk, so filings indexed by the pod
+> it replaced are simply gone.
+
 **How it works.** Uploading a filing means splitting it into chunks, turning
 each chunk into a vector, and saving those vectors in Chroma. "Embedded" Chroma
 is just a folder on the disk of the server that did the work. No other server
@@ -270,6 +299,15 @@ flowchart TB
   LB -->|"Pod A"| GOOD["searches 412 chunks<br/>answer quotes the filing"]
   LB -->|"Pod B"| DB[("Pod B disk: 0 chunks")]
   DB --> BAD["Retrieved 0 chunk(s)<br/>fluent answer, no filing behind it"]
+  classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
+  classDef bad fill:#fdecea,stroke:#c0392b,color:#7b1c14
+  classDef good fill:#e8f6ec,stroke:#1e8449,color:#14532d
+  classDef warn fill:#fff4e0,stroke:#b7791f,color:#7c4a03
+  classDef fix fill:#eef2ff,stroke:#4f46e5,color:#312e81
+  class U,A,Q step
+  class LB warn
+  class DA,GOOD good
+  class DB,BAD bad
 ```
 
 **Settings involved**
@@ -311,6 +349,10 @@ a pod that cannot reach it never serves traffic. **Yours.**
 **In one sentence.** Opening a live connection takes several requests that must
 all reach the *same* server, and a normal load balancer spreads them around.
 
+> **When it happens:** on every page load and every reconnect, once two replicas
+> sit behind one ingress. Only on the polling transport — so it can stay hidden
+> until one user sits behind a proxy that blocks WebSocket.
+
 **How it works.** A WebSocket is not always available, so Socket.IO opens with
 ordinary HTTP polling: one request to start a session, then more requests that
 refer back to it by its id (`sid`).
@@ -332,10 +374,12 @@ sequenceDiagram
   C->>LB: start a session
   LB->>A: (round robin)
   A-->>C: you are sid-1
-  C->>LB: continue sid-1
-  LB->>B: (round robin, other pod)
-  B-->>C: never heard of sid-1
-  Note over C,B: browser restarts, same coin toss
+  rect rgba(192, 57, 43, 0.10)
+    C->>LB: continue sid-1
+    LB->>B: (round robin, other pod)
+    B-->>C: never heard of sid-1
+    Note over C,B: browser restarts, same coin toss
+  end
 ```
 
 With a sticky cookie the first reply names the pod, the balancer reads that
@@ -375,6 +419,11 @@ stopped. It is still spinning."*
 **In one sentence.** Writing an answer takes about a minute, and if the server
 is shut down during that minute the answer is never saved — the question is left
 hanging forever.
+
+> **When it happens: every rolling deploy.** Yes — this is the deploy-time one.
+> Also every scale-down (4 pods to 2), node drain or upgrade, spot reclaim,
+> `kubectl delete pod`, and `docker compose down`. Anything that stops a server
+> *politely*, which is almost everything you do on purpose.
 
 ##### First: what is SIGTERM?
 
@@ -490,6 +539,14 @@ flowchart TB
   T --> D["drain: no new work,<br/>wait for the 1 run in flight"]
   N --> N2["question saved, answer never saved<br/>Priya waits forever"]
   D --> D2["answer saved at 60s<br/>then the server exits"]
+  classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
+  classDef bad fill:#fdecea,stroke:#c0392b,color:#7b1c14
+  classDef good fill:#e8f6ec,stroke:#1e8449,color:#14532d
+  classDef warn fill:#fff4e0,stroke:#b7791f,color:#7c4a03
+  classDef fix fill:#eef2ff,stroke:#4f46e5,color:#312e81
+  class T warn
+  class N,N2 bad
+  class D,D2 good
 ```
 
 ##### Settings involved
@@ -549,6 +606,10 @@ wait really happens. → [§7](#7-break-4--the-drain-and-the-sweep)
 **In one sentence.** Some deaths give the server no chance to run any code at
 all, so a cleanup job at startup finds the questions those deaths abandoned and
 writes "this was interrupted" — otherwise they spin forever.
+
+> **When it happens:** never during a normal deploy — that is the drain's job.
+> This one is for deaths with no warning: an out-of-memory kill, a node that
+> disappears, or a drain that ran out of grace period and was killed mid-way.
 
 ##### Why the drain is not enough
 
@@ -624,6 +685,15 @@ flowchart TB
   S -->|"no"| SKIP["leave it — it may be live on another server"]
   S -->|"yes"| W["write the interrupted answer, marked as an error"]
   W --> R["the analyst can ask again"]
+  classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
+  classDef bad fill:#fdecea,stroke:#c0392b,color:#7b1c14
+  classDef good fill:#e8f6ec,stroke:#1e8449,color:#14532d
+  classDef warn fill:#fff4e0,stroke:#b7791f,color:#7c4a03
+  classDef fix fill:#eef2ff,stroke:#4f46e5,color:#312e81
+  class K,L bad
+  class S warn
+  class SKIP step
+  class W,R good
 ```
 
 ##### Settings involved
@@ -674,6 +744,10 @@ gone."*
 Kubernetes gives it thirty seconds and then kills it — so the drain never gets
 to finish.
 
+> **When it happens:** every rolling deploy — but only visibly when an answer is
+> in flight *and* the drain needs longer than the platform is willing to wait.
+> It is what turns the deploy-time drain above from working into decoration.
+
 **Two clocks start at the same moment, and they do not talk to each other**
 
 | Clock | Owned by | Set with | Default |
@@ -706,6 +780,15 @@ flowchart TB
   T["SIGTERM — an answer needs 60 more seconds"] --> S{"how long will the platform wait?"}
   S -->|"30s, the default"| K["killed at 30s<br/>answer lost, log still looks fine"]
   S -->|"180s"| G["exits by itself at 60s<br/>answer saved, 120s never used"]
+  classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
+  classDef bad fill:#fdecea,stroke:#c0392b,color:#7b1c14
+  classDef good fill:#e8f6ec,stroke:#1e8449,color:#14532d
+  classDef warn fill:#fff4e0,stroke:#b7791f,color:#7c4a03
+  classDef fix fill:#eef2ff,stroke:#4f46e5,color:#312e81
+  class T warn
+  class S step
+  class K bad
+  class G good
 ```
 
 **Settings involved**
@@ -714,6 +797,20 @@ flowchart TB
 | --- | --- | --- | --- |
 | `terminationGracePeriodSeconds` | Kubernetes manifest field. Time between `SIGTERM` and `SIGKILL`. | `30` | below the drain budget, every rollout kills answers halfway and the drain is decoration |
 | `SHUTDOWN_DRAIN_SECONDS` | How long the app *wants* | `120` | keep it under the grace period, with slack — e.g. drain 120, grace 150–180 |
+| `preStop` sleep | Kubernetes manifest field. A pause **before** `SIGTERM`, so the ingress stops sending new connections to a pod that is about to go. | `15` | too short and the pod is still receiving new requests while it shuts down |
+
+**What this repo actually ships**, in
+[deploy/minikube/base/backend.yaml](../deploy/minikube/base/backend.yaml):
+
+```
+preStop sleep      15s   ← the ingress stops sending here
+drain              120s  ← SHUTDOWN_DRAIN_SECONDS
+                   ────
+worst case         135s   <  180s terminationGracePeriodSeconds  ✅
+```
+
+The grace period has to cover **both**, not just the drain — that is the sum
+people forget, and it is why 180 rather than 150.
 
 **Example.** The tell is a stopwatch, not a log line:
 
@@ -737,6 +834,11 @@ left. *At* the deadline means killed; *before* it means drained.
 **In one sentence.** Two messages try to take the same slot number in a
 conversation, the database rejects one of them, and that rejection is
 deliberately ignored — so an answer silently disappears.
+
+> **When it happens:** any time two writes land in one dossier at the same
+> instant — two browser tabs, a filing upload racing a question, the same
+> analyst on a laptop and a phone. Extra replicas make it routine, not possible:
+> it already is.
 
 **How messages are numbered.** Every message in a dossier gets the next number:
 1, 2, 3… The database refuses two messages with the same number in the same
@@ -768,11 +870,13 @@ sequenceDiagram
   participant A as Writer A
   participant DB as Postgres
   participant B as Writer B
-  A->>DB: highest number? → 4
-  B->>DB: highest number? → 4
-  A->>DB: INSERT 5 — accepted
-  B->>DB: INSERT 5 — rejected
-  Note over B: rejection swallowed on purpose<br/>the answer is simply gone
+  rect rgba(192, 57, 43, 0.10)
+    A->>DB: highest number? → 4
+    B->>DB: highest number? → 4
+    A->>DB: INSERT 5 — accepted
+    B->>DB: INSERT 5 — rejected
+    Note over B: rejection swallowed on purpose<br/>the answer is simply gone
+  end
 ```
 
 **The fix.** Lock the conversation row first, so steps 1–3 happen one writer at
@@ -785,11 +889,13 @@ sequenceDiagram
   participant A as Writer A
   participant DB as Postgres
   participant B as Writer B
-  A->>DB: lock this conversation
-  B->>DB: lock this conversation — waits
-  A->>DB: highest 4 → INSERT 5, done
-  DB-->>B: your turn
-  B->>DB: highest 5 → INSERT 6, done
+  rect rgba(30, 132, 73, 0.10)
+    A->>DB: lock this conversation
+    B->>DB: lock this conversation — waits
+    A->>DB: highest 4 → INSERT 5, done
+    DB-->>B: your turn
+    B->>DB: highest 5 → INSERT 6, done
+  end
 ```
 
 **Settings involved**
@@ -830,6 +936,10 @@ stays that way.
 today, so nothing can break; the day someone does, only the viewers connected to
 that *same* server will receive it.
 
+> **When it happens:** not today. It starts the day a feature sends one event to
+> more than one browser — a shared dossier, a typing indicator, a notification —
+> and it will look like a flaky feature rather than a missing setting.
+
 **Two ways to send an event**
 
 | Way | Who receives it | Works across servers? |
@@ -857,6 +967,15 @@ flowchart TB
   E2["someday: send to a room, from Pod A"] --> V1["viewer on Pod A — sees it"]
   E2 -.->|"never arrives"| V2["viewer on Pod B — sees nothing"]
   FIX["set SOCKETIO_MESSAGE_QUEUE_URL<br/>servers relay events through Redis"] --> V2
+  classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
+  classDef bad fill:#fdecea,stroke:#c0392b,color:#7b1c14
+  classDef good fill:#e8f6ec,stroke:#1e8449,color:#14532d
+  classDef warn fill:#fff4e0,stroke:#b7791f,color:#7c4a03
+  classDef fix fill:#eef2ff,stroke:#4f46e5,color:#312e81
+  class E1,C1 good
+  class E2,V1 step
+  class V2 bad
+  class FIX fix
 ```
 
 **Settings involved**
@@ -893,6 +1012,11 @@ everybody at once, including your own `psql`.
 so enough servers will use up every line the database has — even while nobody is
 using the app.
 
+> **When it happens:** at scale-up — and, easy to miss, **during every rolling
+> deploy**. `maxSurge: 1` means the new pod is running before the old one is
+> gone, so the connection count peaks *above* the steady-state number exactly
+> when you are least watching it.
+
 **What a connection is.** A request cannot talk to Postgres by itself. It
 borrows one of a small set of already-open connections, uses it, and gives it
 back. That set is the **pool**, and each server has its own.
@@ -922,6 +1046,15 @@ flowchart TB
   T --> PG{"max_connections = 100"}
   PG -->|"first 100"| OK["served normally"]
   PG -->|"the rest"| X["too many clients already<br/>hits a health check, a migration, your psql"]
+  classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
+  classDef bad fill:#fdecea,stroke:#c0392b,color:#7b1c14
+  classDef good fill:#e8f6ec,stroke:#1e8449,color:#14532d
+  classDef warn fill:#fff4e0,stroke:#b7791f,color:#7c4a03
+  classDef fix fill:#eef2ff,stroke:#4f46e5,color:#312e81
+  class P,T step
+  class PG warn
+  class OK good
+  class X bad
 ```
 
 **Settings involved**
@@ -968,6 +1101,10 @@ time spent twice.
 two servers can start squashing the same conversation at the same moment —
 wasting a model call, but not breaking anything.
 
+> **When it happens:** when a long conversation crosses the fold threshold while
+> two replicas are both serving it. Rare, and it costs one model call rather
+> than a wrong answer.
+
 **What squashing is (folding).** The dossier keeps every message forever. What
 is *sent to the model* is much smaller: the last few turns, plus a summary of
 everything older. Once more than `HISTORY_SUMMARY_THRESHOLD` (24) messages are
@@ -997,6 +1134,15 @@ flowchart TB
   M --> W["summary_through_seq = 20"]
   NR["no Redis: the lease says yes to everyone"] --> D["both fold — one wasted call<br/>the later, staler result is discarded"]
   D --> W
+  classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
+  classDef bad fill:#fdecea,stroke:#c0392b,color:#7b1c14
+  classDef good fill:#e8f6ec,stroke:#1e8449,color:#14532d
+  classDef warn fill:#fff4e0,stroke:#b7791f,color:#7c4a03
+  classDef fix fill:#eef2ff,stroke:#4f46e5,color:#312e81
+  class T step
+  class A,M,W good
+  class B step
+  class NR,D warn
 ```
 
 **Settings involved**
@@ -1047,6 +1193,10 @@ duplicate harmless. **Handled.**
 server — and two servers creating the database tables at the same instant will
 crash one of them.
 
+> **When it happens:** whenever several pods start together — the first deploy
+> against an empty database, a scale-up from zero, a node failure that
+> rescheduled everything at once, and every rolling deploy.
+
 **Which jobs.** Three things happen while a server boots:
 
 1. create the tables if they are missing
@@ -1072,6 +1222,15 @@ flowchart TB
   L -->|"Pod A wins"| W["create tables, prune filings, sweep runs"]
   L -->|"Pod B loses"| SK["logs 'another instance is doing the startup housekeeping'<br/>and starts serving right away"]
   NL["without the lock"] -.-> XX["both run CREATE TABLE<br/>one exits with DuplicateTable"]
+  classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
+  classDef bad fill:#fdecea,stroke:#c0392b,color:#7b1c14
+  classDef good fill:#e8f6ec,stroke:#1e8449,color:#14532d
+  classDef warn fill:#fff4e0,stroke:#b7791f,color:#7c4a03
+  classDef fix fill:#eef2ff,stroke:#4f46e5,color:#312e81
+  class S step
+  class L warn
+  class W,SK good
+  class NL,XX bad
 ```
 
 **Settings involved**
@@ -1112,6 +1271,10 @@ that skips as carefully as the one that wins.
 **In one sentence.** Redis only makes reads faster, so losing it must make the
 app slightly slower and nothing else — it must never break, and never crawl.
 
+> **When it happens:** any Redis restart, upgrade, eviction or outage — and it
+> keeps mattering *after* Redis comes back, because the cache stays switched off
+> until the backends restart.
+
 **What Redis holds here.** Two things, neither of which is the truth:
 
 1. the recent messages of each conversation — a read cache in front of Postgres
@@ -1140,6 +1303,15 @@ flowchart TB
   C -->|"no"| P["read them from Postgres instead<br/>same answer, milliseconds slower"]
   E["Redis goes away"] --> F["first error switches the cache off<br/>and it stops trying"]
   F --> C
+  classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
+  classDef bad fill:#fdecea,stroke:#c0392b,color:#7b1c14
+  classDef good fill:#e8f6ec,stroke:#1e8449,color:#14532d
+  classDef warn fill:#fff4e0,stroke:#b7791f,color:#7c4a03
+  classDef fix fill:#eef2ff,stroke:#4f46e5,color:#312e81
+  class Q step
+  class C warn
+  class H,P good
+  class E,F bad
 ```
 
 **The part people get wrong:** starting Redis again does **not** switch the
@@ -1190,6 +1362,10 @@ it fixes itself."*
 the cache in the wrong order, which is harmless because reads sort them — and
 the thing to test is that the cache and the database always agree.
 
+> **When it happens:** whenever two replicas write to the same dossier within a
+> few milliseconds — the same trigger as row 5 above, and invisible unless the
+> read path ever stops sorting.
+
 **Saving a message is two steps, in this order:**
 
 1. write the row to **Postgres** — this is where its number comes from
@@ -1222,6 +1398,15 @@ flowchart TB
   L --> S["reads sort by number"]
   PG[("Postgres, ordered by number:<br/>3, then 4")] --> S
   S --> O["3, then 4 — from either source, every time"]
+  classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
+  classDef bad fill:#fdecea,stroke:#c0392b,color:#7b1c14
+  classDef good fill:#e8f6ec,stroke:#1e8449,color:#14532d
+  classDef warn fill:#fff4e0,stroke:#b7791f,color:#7c4a03
+  classDef fix fill:#eef2ff,stroke:#4f46e5,color:#312e81
+  class A,B step
+  class L warn
+  class PG,S good
+  class O good
 ```
 
 **Settings involved**
