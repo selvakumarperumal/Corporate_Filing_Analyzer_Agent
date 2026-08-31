@@ -161,6 +161,125 @@ kubectl -n cfa logs -l app.kubernetes.io/name=cfa-backend --tail=-1 --prefix
 The numbers are the rows of [SCALING.md §1](SCALING.md#1-the-verdict-table), so
 a failure here has a paragraph there explaining itself.
 
+### What each row is actually about
+
+The matrix says *where* you can reproduce a break. This says **what the break
+is** — the symptom a user would report, what has to become true for it to stop,
+and whether that is a line of config you owe the deployment or something the
+code already does for you.
+
+**1 — JWT signing key.** With `JWT_SECRET_KEY` unset, every instance invents
+its own random key at boot. A token minted by A is gibberish to B, and the
+refresh token the browser reaches for was signed with the same dead key, so the
+recovery fails too and the user is simply signed out. It is not a clean outage:
+roughly `(N-1)/N` of requests fail, so it reads as "it logs me out sometimes".
+*Solve:* one key, shared by every instance, and said out loud at startup rather
+than discovered at somebody's first login. **Yours — set `JWT_SECRET_KEY`.**
+
+**2 — Embedded vector store.** Chroma runs embedded, on the pod's own disk, so
+a filing uploaded through A physically exists only on A. Questions afterwards
+land wherever the balancer sends them, and B has nothing to retrieve. There is
+no error — the model answers anyway, from nothing. Silent wrong answers are
+worse than a 500, which is why this is the test that matters most. *Solve:* one
+store every instance reads and writes (`CHROMA_HOST`), plus a startup gate so a
+pod that cannot reach it never serves traffic. **Yours — run Chroma, set the
+host.**
+
+**3 — Handshake routing.** A Socket.IO polling handshake is several HTTP
+requests that must all land on the same process. Round-robin splits them, the
+second request is told its session does not exist, the client reconnects, and
+splits again — a loop, not a failure. No application code can fix it: the
+routing decision is made before the request reaches the app. *Solve:* cookie
+affinity at the ingress, proven by watching the cookie be obeyed rather than
+merely be set. **Yours — sticky ingress.**
+
+**4 (drain) — In-flight runs die on shutdown.** An answer takes a minute; a
+shutdown takes an instant. Kill the process mid-stream and the question stays
+unanswered forever while the user watches a spinner. On one instance you pay
+this at restarts; on N you pay it N times per rollout. *Solve:* on SIGTERM,
+stop accepting new work and wait for the runs already in hand. **Handled —
+watch the wait, and the answer land.**
+
+**4 (sweep) — Runs that died without warning.** Not every death is polite: OOM
+kills, node loss, `SIGKILL`. Those leave a row that claims to be running, which
+nothing will ever finish and nothing will ever report. *Solve:* at startup,
+close out runs abandoned by a previous life — without touching runs another
+live instance is streaming right now. That cutoff is the whole difficulty.
+**Handled — test both halves.**
+
+**4 (grace period) — The platform has to wait for the drain.** Draining is
+theatre if Kubernetes kills the pod at the 30-second default while the drain is
+still 40 seconds from done. You are back to losing answers, now with logs that
+say you were handling it. *Solve:* `terminationGracePeriodSeconds` comfortably
+above the drain budget, verified by a pod that exits *before* the deadline, not
+at it. **Yours — the manifest.**
+
+**5 — Two writers, one message position.** Two writes claim the same position
+in one dossier; the loser's insert violates the unique constraint, the error is
+caught, and an answer vanishes with nothing anywhere saying so. This is not a
+scaling bug — two browser tabs against one instance will do it — and it is the
+one nobody goes looking for. *Solve:* claim positions one at a time (the
+conversation row is locked while a position is taken), and check the arithmetic
+afterwards: `count(*) = max(seq)`, every question followed by an answer.
+**Handled — verify by counting.**
+
+**6 — Broadcasting.** Nothing broadcasts today: every event is emitted to the
+one connection that asked for it, so there is no cross-pod delivery to get
+wrong. That is the finding, and it is only true until someone adds a shared
+dossier or a presence indicator — an `emit` to a room reaches only the pod
+holding that room. *Solve:* keep it true (a `grep` is the entire test), and set
+`SOCKETIO_MESSAGE_QUEUE_URL` the day the feature lands. **Not yet — but check
+that it is still not yet.**
+
+**10 — Postgres connections.** Each instance opens up to 15 connections (pool 5
+plus 10 overflow) against a single `max_connections`. Multiply by N and the
+ceiling is reached by the size of the deployment rather than by the load; the
+failure then lands on whichever request connects next, not on whatever caused
+it. *Solve:* arithmetic — N × (pool + overflow), plus headroom for migrations
+and your own `psql`, under `max_connections` — and no pooled connection held
+across a model call, since a minute-long checkout is what turns headroom into
+exhaustion. **Yours — size it.**
+
+**12 — Rolling summaries.** When history crosses the fold threshold, two
+instances can decide to fold the same dossier in the same moment. The cost is a
+duplicate call to the model that is already the bottleneck. *Solve:* a
+best-effort Redis lease so one instance folds, and ordering that makes a
+duplicate harmless anyway — `summary_through_seq` only moves forwards, and a
+fold that lands stale is discarded. That is precisely why the lease is allowed
+to be best-effort rather than a lock in Postgres. **Handled — prove the
+duplicate costs money, not correctness.**
+
+**6/7 — Housekeeping and the schema race.** Work meant to happen once happens
+on every pod: all of them prune and sweep at boot, and two pods calling
+`create_all` against an empty database race each other until one exits with
+`DuplicateTable` — a crash loop on the first deploy of the day. *Solve:* a
+Postgres advisory lock around both, so one instance does the work and the
+others skip and say so. Test the skipper as carefully as the winner. **Handled
+— one winner, one line saying it stood aside.**
+
+**11 (fail-soft) — Redis is a cache, never the truth.** The question is not
+whether Redis can go down but what it costs when it does — and whether retrying
+turns one outage into a timeout on every single request. *Solve:* with Redis at
+zero replicas the whole analyst path still works at the price of one extra
+`SELECT` per question, and both subsystems switch themselves off once and stay
+off until a restart. The consequence to remember: bring Redis back and you must
+restart the backends too. **Handled — a deployment that *needs* Redis to be
+correct has a bug in it.**
+
+**11 (ordering) — Cached tails, written by two instances.** Rows are appended
+to the cache by whichever instance recorded the message, so two instances
+writing one dossier can push them in an order that does not match the positions
+they were given. Read the conversation back and it is scrambled. *Solve:* sort
+by `seq` on the way out, so cache and database answer identically — same
+response from both instances, and the same again after a `FLUSHALL`. **Handled
+— cache and database agreeing is the property.**
+
+If you are triaging rather than testing: the rows marked **Yours** (1, 2, 3,
+the grace period, 10) are configuration, they are the ones a deployment can get
+wrong today, and none of them are fixable in application code. The rows marked
+**Handled** are already done — you are testing that they *stay* done, which is
+why every one of them has a negative to run first.
+
 ---
 
 ## 3. Ground rules
