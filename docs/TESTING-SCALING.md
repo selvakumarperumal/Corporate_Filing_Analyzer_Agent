@@ -434,8 +434,8 @@ That `sid` lives in the memory of the server that answered the first request.
 It is not in Postgres and not in Redis — there is nowhere else to look it up.
 
 A round-robin balancer sends request two somewhere else. That server has never
-heard of the sid and says so. The browser does the correct thing — starts a
-fresh handshake — and gets split again. That is the loop.
+heard of the sid and answers `400 Invalid session`. The browser does the correct
+thing — starts a fresh handshake — and gets split again. That is the loop.
 
 ```mermaid
 sequenceDiagram
@@ -450,7 +450,7 @@ sequenceDiagram
   rect rgba(192, 57, 43, 0.10)
     C->>LB: continue sid-1
     LB->>B: (round robin, other pod)
-    B-->>C: never heard of sid-1
+    B-->>C: 400 Invalid session sid-1
     Note over C,B: browser restarts, same coin toss
   end
 ```
@@ -458,6 +458,103 @@ sequenceDiagram
 With a sticky cookie the first reply names the pod, the balancer reads that
 cookie on every later request, and all of them land on Pod A.
 
+**Does that mean every user lands on one pod?** No — and this is the part that
+reads backwards at first. The cookie is **per browser**, not per deployment.
+Each visitor gets their own, the gateway hashes *that* value, and different
+values land on different pods. Load is still spread; what is pinned is one
+user's own sequence of requests.
+
+```mermaid
+flowchart TB
+  U1["Priya's browser<br/>cfa-sticky = a3f1…"] --> G{"gateway hashes<br/>each cookie"}
+  U2["Ravi's browser<br/>cfa-sticky = 91b7…"] --> G
+  U3["Sara's browser<br/>cfa-sticky = c204…"] --> G
+  G -->|"a3f1 →"| P1["Pod 1<br/>holds Priya's and Sara's sessions"]
+  G -->|"c204 →"| P1
+  G -->|"91b7 →"| P2["Pod 2<br/>holds Ravi's session"]
+  classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
+  classDef good fill:#e8f6ec,stroke:#1e8449,color:#14532d
+  classDef warn fill:#fff4e0,stroke:#b7791f,color:#7c4a03
+  class U1,U2,U3 step
+  class G warn
+  class P1,P2 good
+```
+
+Three consequences worth knowing:
+
+| Question | Answer |
+| --- | --- |
+| Does one pod get all the traffic? | No. Cookies hash across the pool, so users spread roughly evenly. |
+| Is one user's work confined to one pod? | Only their **socket**. Every HTTP call, upload and question is stateless and can be served by any pod. |
+| What if a pinned pod goes away? | That client rehashes to another pod, which has never seen its `sid`, so the browser reconnects **once** and carries on. One reconnect on a rollout is fine; a *loop* is the symptom of no stickiness at all. |
+
+`consistentHash` is what keeps the third row true. Plain modulo hashing would
+reshuffle *every* user when the pod count changes; consistent hashing moves only
+the share that has to move, so a rollout does not reconnect the whole userbase.
+
+##### "Can Redis do this instead?"
+
+Short answer: **no**, and it is worth knowing exactly why, because this app runs
+Redis and it is a reasonable thing to reach for.
+
+The session that has to stay put is Engine.IO's, and it lives in a plain
+dictionary inside one process. From the installed library
+(`engineio/async_server.py`):
+
+```python
+self.sockets = {}                     # sid → the live transport, in this process
+...
+if sid not in self.sockets:
+    self._log_error_once(f'Invalid session {sid}', 'bad-sid')
+    r = self._bad_request(f'Invalid session {sid}')     # HTTP 400
+```
+
+That dictionary holds a live object — the open long-poll request, the write
+buffer, the ping timer. It is not serialisable state that could be parked in
+Redis and picked up elsewhere, which is why no amount of Redis moves it.
+
+Redis has two jobs in this deployment, and neither is this one:
+
+| Redis is used for | What it does | Does it fix Break #3? |
+| --- | --- | --- |
+| `REDIS_URL` — message cache and summary leases | caches the conversation tail, and stops two pods folding one summary | **No.** Nothing to do with sockets. |
+| `SOCKETIO_MESSAGE_QUEUE_URL` — the Socket.IO message queue | lets a pod **emit** to a connection another pod is holding (row 6 below) | **No.** It relays *events* between pods. The transport still has to be reached on the pod that owns it. |
+
+The second row is the one that catches people, because it sounds exactly like
+the fix. The library's own description of it is *"enables multiple servers to
+share the list of clients, with the servers communicating events through a
+pub/sub backend"* — sharing a **list** and relaying **events**, not sharing the
+transport. Turn it on and a split handshake still fails with `Invalid session`;
+you have solved a different problem (broadcasting) and paid a Redis round trip
+per event for it.
+
+##### What would remove the need — and what to do
+
+There is exactly one alternative: **stop using the polling transport.**
+
+```js
+// frontend/app.js
+io(url, { transports: ["websocket"] })      // no polling, nothing to split
+```
+
+A WebSocket is a single connection that is established once and then stays
+where it is, so there is no second request to route wrongly. That is why a
+WebSocket test passes on a deployment with no stickiness at all — and why it is
+not a test of this.
+
+**The recommendation is to keep the cookie**, which is what this deployment
+does:
+
+| Option | Cost | What it gives up |
+| --- | --- | --- |
+| **Sticky cookie** *(what this repo does)* | one `DestinationRule` | nothing |
+| WebSocket-only | one line in the client | the polling fallback — users behind a proxy that blocks WebSocket upgrades get nothing at all, with no degraded mode |
+| Redis message queue | a Redis round trip per event | it does not fix this, so: everything, plus latency |
+
+Keeping polling as a fallback is worth one small piece of gateway config. The
+two are not exclusive either — the client asks for `["websocket", "polling"]`
+today, so most users are on a WebSocket within a second of loading the page and
+the cookie only matters for the ones who cannot be.
 **Settings involved**
 
 | Setting | What it does | Default | Get it wrong and… |
@@ -1238,7 +1335,7 @@ flowchart TB
 
 | Setting | What it does | Default | Get it wrong and… |
 | --- | --- | --- | --- |
-| `SOCKETIO_MESSAGE_QUEUE_URL` | Lets servers forward events to each other through Redis | *(empty — off)* | leaving it off is correct **today**; leaving it off after the first room-based feature means half your viewers silently miss events |
+| `SOCKETIO_MESSAGE_QUEUE_URL` | Lets servers forward events to each other through Redis | *(empty — off)* | leaving it off is correct **today**; leaving it off after the first room-based feature means half your viewers silently miss events. It does **not** replace sticky sessions — see row 3 |
 | `REDIS_URL` | Unrelated to the above — the message cache. Setting one does not set the other. | *(empty)* | — |
 
 Turning the queue on costs a Redis round trip per event, which is why it is off
