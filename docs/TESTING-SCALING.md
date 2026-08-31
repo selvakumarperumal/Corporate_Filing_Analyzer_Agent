@@ -934,6 +934,40 @@ repair a pod can perform on another pod's damage, and it is why the fix is
 | **4a drain** | the dying pod stays alive long enough to move its answer from RAM into Postgres |
 | **4c grace period** | the kubelet is told to permit that wait, instead of killing the pod half-way through it |
 | **4b sweep** | a *different* pod, later, repairs what never made it out — using the only thing pods share |
+##### What the drain is *not*
+
+The natural way to read all of the above is *"the pod is busy, so it cannot be
+terminated"*. That is the one wrong conclusion to take away, so it is worth
+saying plainly:
+
+> **The drain is a request for time, not a refusal to leave.**
+
+Being busy protects a pod from nothing. Nothing in this application can decline
+a shutdown, delay a deploy, or hold a pod open. The moment `SIGTERM` arrives,
+that pod is going away — the decision was made by whoever ran the deploy, and
+the pod was not consulted.
+
+All the drain does is **postpone the app's own `exit()`** for as long as its
+budget allows:
+
+| What people assume | What actually happens |
+| --- | --- |
+| the pod is protected while a task is running | the pod is **already doomed**; the task changes nothing about that |
+| the drain blocks the rollout | the rollout is already going; a new pod was created *before* this one was told to leave |
+| the pod stays up until the work is done | it stays up until the work is done **or** the platform's patience runs out — whichever comes first |
+| a busy pod cannot be killed | `kubectl delete pod --force --grace-period=0` kills it instantly. So does the node dying. Neither is negotiable |
+
+And the app's own patience is finite too. If `SHUTDOWN_DRAIN_SECONDS` expires
+with a run still going, `drain()` logs `did not finish in time`, **does not
+cancel the task**, and exits anyway — the process is leaving either way, and
+cancelling a half-written answer cannot make it any more saved.
+
+So the accurate sentence, and the one to remember:
+
+> The pod is leaving. The drain asks for enough time to get the answer into
+> Postgres first — and the **kubelet** decides whether it gets that time. Which
+> is the next row.
+
 ##### The one idea underneath all of this
 
 > A pod cannot look inside another pod's memory.
@@ -1257,6 +1291,56 @@ to finish.
 > **When it happens:** every rolling deploy — but only visibly when an answer is
 > in flight *and* the drain needs longer than the platform is willing to wait.
 > It is what turns the deploy-time drain above from working into decoration.
+
+**What `terminationGracePeriodSeconds` actually is.**
+
+One field in the pod spec, and the single most misread number in a Kubernetes
+deployment:
+
+```yaml
+spec:
+  terminationGracePeriodSeconds: 180   # sibling of `containers`, not inside one
+  containers:
+    - name: api
+```
+
+**It is a deadline, not a delay.** This is the misreading worth fixing first.
+Setting 180 does **not** keep pods alive for three minutes. It means *"you have
+up to 180 seconds; leave whenever you are ready"*. A pod with nothing in flight
+exits in under a second and the number never comes up. You are buying a ceiling,
+not paying a cost.
+
+**What the clock covers.** It starts the instant the pod is marked for deletion,
+and it has to cover *everything* the pod does on the way out — the `preStop`
+hook and the app's shutdown share the one budget:
+
+```mermaid
+gantt
+  title What the 180 seconds has to cover
+  dateFormat X
+  axisFormat %S s
+  section Kubernetes
+  grace period, SIGKILL at the end :crit, 0, 180
+  section Inside the pod
+  preStop sleep :done, 0, 15
+  drain, up to 120s :active, 15, 135
+  spare margin :done, 135, 180
+```
+
+**What happens at the end.** `SIGKILL`. Not another signal, not a warning, not a
+negotiation — the kernel removes the process. No code runs, so nothing is saved,
+and whatever the drain was in the middle of is lost. That is the same wreckage
+the sweep cleans up hours later.
+
+| | |
+| --- | --- |
+| **Where it lives** | the pod spec, in [`backend.yaml`](../deploy/minikube/base/backend.yaml) |
+| **Kubernetes default** | `30` — shorter than one answer from a local model |
+| **What this repo sets** | `180`, to cover `preStop` 15 + drain 120 + margin |
+| **What it costs when unused** | nothing. A quiet pod still exits immediately |
+| **How to pick it** | `preStop` + `SHUTDOWN_DRAIN_SECONDS` + a margin. Raise the drain and you must raise this too |
+| **Who can override it** | `kubectl delete pod --grace-period=…`, and `--force --grace-period=0` skips the whole thing |
+| **What it is not** | a guarantee. A node that fails takes its pods with it, grace period or no |
 
 **Two clocks start at the same moment, and they do not talk to each other**
 
