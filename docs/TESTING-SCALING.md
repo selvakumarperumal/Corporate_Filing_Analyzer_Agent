@@ -373,61 +373,143 @@ completely broken.
 stopped. It is still spinning."*
 
 **In one sentence.** Writing an answer takes about a minute, and if the server
-is shut down during that minute the answer is never saved — the question is
-left hanging forever.
+is shut down during that minute the answer is never saved — the question is left
+hanging forever.
 
-**Two words first**
+##### First: what is SIGTERM?
 
-- **A run** — the job that answers one question. It starts when you press send
-  and ends when the last word is saved. It exists only inside that one server
-  process; nothing else can pick it up.
-- **In flight** — a run that has started and not finished.
+A program never stops by itself. Something has to **tell** it to stop, and on
+Linux that message is called a **signal**. Two of them matter here:
 
-**What gets saved, and when.** One question is **two** writes, far apart:
+| Signal | What it means | Does the program get to run any code? | Who sends it |
+| --- | --- | --- | --- |
+| **`SIGTERM`** | "please stop when you can" | **Yes.** It can finish what it is doing, save, close files, then exit on its own | `kill <pid>`, `docker stop`, a Kubernetes rollout, scaling down, draining a node |
+| **`SIGKILL`** | "stop now" | **No.** The kernel removes the process. Nothing runs — no saving, no last write | `kill -9`, the out-of-memory killer, the grace-period timeout, a node dying |
 
-| Time | What is happening | Saved to the database? |
+Think of `SIGTERM` as being told *"wrap up and go home"* — you get to save your
+file first. `SIGKILL` is the power being cut.
+
+**See it for yourself in thirty seconds.** Start a program that says something
+when it is asked to stop:
+
+```bash
+python3 -c '
+import signal, time
+signal.signal(signal.SIGTERM, lambda *_: (print("SIGTERM — saving my work"), exit(0)))
+print("working…"); time.sleep(300)' &
+kill %1          # SIGTERM
+```
+
+```
+working…
+SIGTERM — saving my work
+```
+
+Now run exactly the same thing and use `kill -9 %1` instead:
+
+```
+working…
+[1]+  Killed    python3 -c …
+```
+
+No *"saving my work"* line — the handler never got to run. **That is the whole
+difference**, and the rest of this row is about which of the two your deploys
+are doing.
+
+Every ordinary deploy sends `SIGTERM` first: a new image, `rollout restart`,
+scaling from 4 pods to 2, a node being drained. It is the normal, polite path —
+and this app's shutdown code only runs on that path.
+
+##### Second: what is a "run", and what does "in flight" mean?
+
+- **A run** is the job that answers *one* question. It starts when the analyst
+  presses send and ends when the last word has been saved.
+- It lives **only inside that one server process**, in memory. No other server
+  knows it exists. There is no queue, no job table, nothing on disk.
+- **In flight** means started and not finished yet.
+
+The word is borrowed from aircraft, and the analogy is exact: when an airport
+closes, planes already in the air still have to land. You cannot un-take-off a
+run. You either let it finish, or it is lost.
+
+##### What gets saved, and when
+
+One question is **two** writes to the database, far apart:
+
+| Time | What is happening | Saved? |
 | --- | --- | --- |
-| 0s | you press send | **yes** — the question row |
-| 0–60s | the model writes the answer, word by word | no, not yet |
+| 0s | analyst presses send | **yes** — the question row |
+| 0–60s | the model writes the answer, word by word, streaming to the browser | no, not yet |
 | 60s | the last word arrives | **yes** — the answer row |
 
 For that whole minute the database holds a question with no answer. **That is
 normal** — while the run is alive.
 
-**What goes wrong.** A deploy tells the server to stop (`SIGTERM`). Without a
-drain it stops right then, in the middle of the minute. The run dies with the
-process, so nobody ever writes the answer row, and the database is left like
-this permanently:
+##### A concrete example, second by second
 
-| seq | role | content |
-| --- | --- | --- |
-| 7 | user | "summarise the risk factors" |
-| *(none)* | *(none)* | *the answer row that was never written* |
+Priya asks *"summarise the risk factors"* at **14:30:00**. Someone starts a
+deploy at **14:30:20**, twenty seconds later.
 
-Nothing retries it. The run only existed in that server's memory, and the
-browser showing the spinner has no way to ask again on its own.
+**Without the drain:**
 
-**What the drain does.** New requests have already stopped arriving by then, so
-shutdown simply waits for the runs it is *already holding* — up to
-`SHUTDOWN_DRAIN_SECONDS` — and then exits.
+| Clock | What Priya sees | What the server does | In the database |
+| --- | --- | --- | --- |
+| 14:30:00 | her question appears | writes the question as message 7, starts the run | Q7 |
+| 14:30:05 | words start appearing | the model is generating | Q7 |
+| 14:30:20 | words still appearing | **`SIGTERM` arrives** — the deploy | Q7 |
+| 14:30:20 | **text freezes mid-sentence** | the process exits instantly; the run dies with it | Q7 |
+| 14:35:00 | still spinning | (this server no longer exists) | Q7 |
+| next week | still spinning | — | **Q7, alone, forever** |
+
+**With the drain:**
+
+| Clock | What Priya sees | What the server does | In the database |
+| --- | --- | --- | --- |
+| 14:30:20 | nothing changes | `SIGTERM` — stops accepting **new** work, waits for the 1 run it is holding | Q7 |
+| 14:30:35 | words still appearing | still waiting | Q7 |
+| 14:31:00 | the answer finishes normally | writes the answer as message 8 — **then** exits | Q7 + A8 |
+
+The drain is the airport rule: **no new take-offs, but the planes already in the
+air get to land.**
+
+##### "Why doesn't it just retry?"
+
+This is the question everyone asks, and the answer is what makes the row matter:
+
+- Nothing wrote down "this question still needs an answer". The only record that
+  a run existed was the run itself, in that process's memory.
+- The browser is not retrying either. It is holding a socket that just closed,
+  waiting for words that will never come.
+- The next server to start has no way to tell a question that is *stranded* from
+  a question that is *being answered right now on another server*. (That is the
+  sweep, in the next row, and it is why it waits 30 minutes.)
 
 ```mermaid
 flowchart TB
-  T["deploy stops the server<br/>20s into a 60s answer"] --> N["no drain: exits immediately"]
-  T --> D["drain: waits for the 1 run it holds"]
-  N --> N2["question saved, answer never saved<br/>the user waits forever"]
-  D --> D2["answer finishes at 60s and is saved<br/>then the server exits"]
+  T["SIGTERM arrives<br/>20s into a 60s answer"] --> N["no drain: exit immediately"]
+  T --> D["drain: no new work,<br/>wait for the 1 run in flight"]
+  N --> N2["question saved, answer never saved<br/>Priya waits forever"]
+  D --> D2["answer saved at 60s<br/>then the server exits"]
 ```
 
-**Settings involved**
+##### Settings involved
 
 | Setting | What it does | Default | Get it wrong and… |
 | --- | --- | --- | --- |
-| `SHUTDOWN_DRAIN_SECONDS` | How long shutdown waits for answers still being written | `120` | too low and slow answers are cut off; it must be longer than your slowest answer and **shorter** than the platform's grace period |
-| `terminationGracePeriodSeconds` | Not an env var — a Kubernetes manifest field. How long the platform waits before `SIGKILL`. | `30` | anything below the drain and the drain never finishes — that is the next row |
+| `SHUTDOWN_DRAIN_SECONDS` | How many seconds shutdown waits for answers still being written | `120` | too low and slow answers are cut off. It must be **longer** than your slowest answer and **shorter** than the platform's grace period |
+| `terminationGracePeriodSeconds` | Not an env var — a Kubernetes manifest field. How long the platform waits after `SIGTERM` before sending `SIGKILL`. | `30` | set below the drain and the drain never gets to finish — that is the Grace period row |
 
-**Example.** Ask for something long, then `kubectl rollout restart` while it is
-still streaming. Watch the leaving pod. A pass is **both** of these lines:
+##### Example — prove it on your own deployment
+
+Ask for something long (a summary of a whole filing, not "hello"), and while the
+words are still streaming:
+
+```bash
+kill -TERM <uvicorn pid>                            # locally
+kubectl -n cfa rollout restart deploy/cfa-backend   # on Kubernetes
+```
+
+A pass is **both** of these lines in the leaving server's log:
 
 ```
 INFO  api.socket  Waiting up to 120s for 1 run(s) to finish
@@ -448,8 +530,11 @@ SELECT seq, role, status FROM messages
 WHERE conversation_id = '…' ORDER BY seq;
 ```
 
-**Why more servers make it worse.** A rolling deploy stops every pod in turn.
-So every answer being written anywhere in the deployment is at stake, on every
+And the negative worth doing once: `kill -9` instead of `kill -TERM`. No drain
+lines appear at all, because no code ran — which is the next row.
+
+**Why more servers make it worse.** A rolling deploy stops every pod in turn, so
+every answer being written *anywhere* in the deployment is at stake on every
 deploy. With one instance you only paid this at restarts.
 
 **Fix:** wait for in-flight runs on shutdown. **Handled** — the test is that the
@@ -461,64 +546,110 @@ wait really happens. → [§7](#7-break-4--the-drain-and-the-sweep)
 
 **Complaint:** *"That question from Tuesday is still thinking."*
 
-**In one sentence.** Some crashes give the server no chance to finish anything,
-so a cleanup job at startup finds those abandoned questions and writes "this was
-interrupted" — otherwise they spin forever.
+**In one sentence.** Some deaths give the server no chance to run any code at
+all, so a cleanup job at startup finds the questions those deaths abandoned and
+writes "this was interrupted" — otherwise they spin forever.
 
-**Two kinds of stopping**
+##### Why the drain is not enough
 
-| How the server stops | Does it get a chance to finish? | Who cleans up |
+The drain from the row above only runs when the server is asked politely —
+`SIGTERM`. These deaths ask nothing:
+
+| How the server dies | Signal | Does the drain run? | Who cleans up |
+| --- | --- | --- | --- |
+| deploy, restart, scale-down | `SIGTERM` | **yes** | nobody needs to |
+| out of memory | `SIGKILL` | no | the sweep |
+| grace period expired mid-drain | `SIGKILL` | no — it was cut off | the sweep |
+| the node disappears | *nothing at all* | no | the sweep |
+
+The wreckage is identical in every case: **a question row with nothing after
+it**, and nobody coming back for it.
+
+##### A concrete example
+
+Ravi asks a question at **09:15:00**.
+
+| Clock | What happens | In the database |
 | --- | --- | --- |
-| a deploy or restart (`SIGTERM`) | yes — it drains (row above) | nobody needs to |
-| `SIGKILL`, out of memory, node dies | **no** — no code runs at all | the sweep, at the next startup |
+| 09:15:00 | question saved as message 7, the run starts | Q7 |
+| 09:15:10 | the pod uses too much memory; Linux sends `SIGKILL` | Q7 |
+| 09:15:10 | the process is gone — **no code ran**, nothing was saved | Q7 |
+| 09:15:11 | Kubernetes starts a replacement pod | Q7 |
+| 09:15:11 | the new pod sweeps, but Q7 is **11 seconds old** — too new to touch | Q7 |
+| 09:45:00 | Ravi's browser has long since given up. The question still shows as unanswered | Q7 |
+| the next startup after 09:45 | Q7 is now older than 30 minutes → the sweep writes the interrupted answer | Q7 + A8 *(error)* |
 
-The wreckage looks identical either way: a question row with nothing after it,
-and nobody coming back for it.
+Two things in that table surprise people, and both are deliberate:
 
-So at startup one server looks for exactly that shape and writes the answer that
-never came — *"This run was interrupted before it finished…"*, marked as an
-error — so the analyst gets something they can act on instead of a spinner.
+1. **The sweep is not immediate.** It runs *at startup only*, and only touches
+   questions older than `STALE_RUN_MINUTES` (30). So the pod that replaces the
+   dead one usually heals nothing — a later start does.
+2. **That delay is the point.** Read the next section for why.
 
-**The hard part, and the reason for the 30 minutes.** A question being answered
-*right now, on another server* looks exactly the same: question row, no answer
-row yet. Mark that one and you have faked a failure on a perfectly good run.
+##### The hard part — why it waits 30 minutes
+
+A question being answered **right now, on another server** looks *exactly* the
+same as an abandoned one: a question row, no answer row yet. There is no flag
+distinguishing them, because the run only exists in another process's memory.
+
+Mark that one and you have faked a failure on a perfectly healthy run — while
+the analyst is watching the words arrive. That is worse than the problem being
+fixed.
 
 | Question written | Answer row | Age | What the sweep does |
 | --- | --- | --- | --- |
-| 10:00 | none | 2 minutes | **nothing** — another pod may be answering it right now |
+| 10:00 | none | 2 minutes | **nothing** — another server may be answering it right now |
 | 10:00 | none | 45 minutes | writes the "interrupted" row |
 | 10:00 | 10:01 | any | nothing — it finished |
 
-`STALE_RUN_MINUTES` (30) is that cutoff. No real run lives that long. Each
-candidate is also re-checked under the conversation's lock immediately before
-writing, in case an answer landed in between.
+No real run lives for 30 minutes, so anything older than that is safe to declare
+dead. Each candidate is also re-checked under the conversation's lock
+immediately before writing, in case an answer landed in the meantime.
+
+##### What the analyst ends up seeing
+
+Instead of a spinner that never resolves, the dossier shows an answer marked as
+an error:
+
+> *"This run was interrupted before it finished — the server restarted while the
+> answer was being written. Ask again to get an answer."*
+
+That is the entire value of this row: **a spinner tells you nothing and can be
+waited on forever; an error tells you to ask again.**
 
 ```mermaid
 flowchart TB
-  K["server dies with no warning<br/>SIGKILL, OOM, lost node"] --> L["question saved, answer never saved"]
-  L --> S{"at the next startup:<br/>is it older than 30 minutes?"}
+  K["server dies with no warning<br/>SIGKILL, out of memory, lost node"] --> L["question saved, answer never saved"]
+  L --> S{"at a later startup:<br/>is it older than 30 minutes?"}
   S -->|"no"| SKIP["leave it — it may be live on another server"]
-  S -->|"yes"| W["write: interrupted by a restart"]
-  W --> R["the user sees an error and can ask again"]
+  S -->|"yes"| W["write the interrupted answer, marked as an error"]
+  W --> R["the analyst can ask again"]
 ```
 
-**Settings involved**
+##### Settings involved
 
 | Setting | What it does | Default | Get it wrong and… |
 | --- | --- | --- | --- |
-| `STALE_RUN_MINUTES` | How old an unanswered question must be before the sweep touches it | `30` | too low and the sweep marks *live* runs on other servers as failed — worse than the problem it fixes. Too high and users stare at spinners for longer |
-| `SHUTDOWN_DRAIN_SECONDS` | (row above) the polite path | `120` | a good drain means the sweep rarely finds anything, which is the goal |
+| `STALE_RUN_MINUTES` | How old an unanswered question must be before the sweep is allowed to touch it | `30` | too low and the sweep marks **live** runs on other servers as failed — worse than the problem. Too high and analysts stare at spinners for longer |
+| `SHUTDOWN_DRAIN_SECONDS` | The polite path from the row above | `120` | a working drain means the sweep rarely finds anything, which is the goal |
 
-**Example.** Strand a run on purpose: force-kill the process mid-answer so
-nothing drains. Then back-date the question so you do not have to wait half an
-hour:
+##### Example — strand a run on purpose
+
+Kill the process the rude way, mid-answer, so nothing drains:
+
+```bash
+kill -9 <uvicorn pid>
+```
+
+The question is now stranded, but it is seconds old, so a restart will ignore
+it. Rather than waiting half an hour, **move it into the past**:
 
 ```sql
 UPDATE messages SET created_at = now() - interval '45 minutes'
 WHERE conversation_id = '…' AND seq = 7;
 ```
 
-Restart, and the startup log says:
+Now restart, and the startup log says:
 
 ```
 INFO  conversations.service  Closed out 1 interrupted run(s) from a previous life
@@ -526,8 +657,8 @@ INFO  conversations.service  Closed out 1 interrupted run(s) from a previous lif
 
 Run the negative too, because it is the half that can hurt you: while instance B
 is streaming a long answer, restart instance A. B's live run must **not** be
-swept — it should still be unanswered when A comes back, and B should finish it
-normally.
+swept — the question should still be unanswered when A comes back, and B should
+finish it normally a moment later.
 
 **Fix:** close out abandoned runs at startup and leave live ones alone.
 **Handled** — that cutoff is the whole difficulty. → [§7c](#7c-the-sweep)
