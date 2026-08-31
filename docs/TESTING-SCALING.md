@@ -627,489 +627,135 @@ completely broken.
 **Complaint:** *"I asked a question, the answer started appearing, then it
 stopped. It is still spinning."*
 
-**In one sentence.** Writing an answer takes about a minute, and if the server
-is shut down during that minute the answer is never saved — the question is left
-hanging forever.
+**In one sentence.** Writing an answer takes about a minute, and if the pod is
+shut down during that minute the answer is never saved — leaving a question that
+hangs forever.
 
-> **When it happens: every rolling deploy.** Yes — this is the deploy-time one.
-> Also every scale-down (4 pods to 2), node drain or upgrade, spot reclaim,
-> `kubectl delete pod`, and `docker compose down`. Anything that stops a server
-> *politely*, which is almost everything you do on purpose.
+> **When it happens: every rolling deploy.** Also every scale-down, node drain,
+> spot reclaim, `kubectl delete pod` and `docker compose down` — anything that
+> stops a pod *politely*, which is almost everything you do on purpose.
 
-##### First: what is SIGTERM?
+##### The problem, in three facts
 
-A program never stops by itself. Something has to **tell** it to stop, and on
-Linux that message is called a **signal**. Two of them matter here:
+**1. An answer takes about a minute.** The model writes it word by word, and it
+is streamed to the browser as it goes.
 
-| Signal | What it means | Does the program get to run any code? | Who sends it |
-| --- | --- | --- | --- |
-| **`SIGTERM`** | "please stop when you can" | **Yes.** It can finish what it is doing, save, close files, then exit on its own | `kill <pid>`, `docker stop`, a Kubernetes rollout, scaling down, draining a node |
-| **`SIGKILL`** | "stop now" | **No.** The kernel removes the process. Nothing runs — no saving, no last write | `kill -9`, the out-of-memory killer, the grace-period timeout, a node dying |
+**2. It is saved in two pieces, a minute apart.**
 
-Think of `SIGTERM` as being told *"wrap up and go home"* — you get to save your
-file first. `SIGKILL` is the power being cut.
-
-**See it for yourself in thirty seconds.** Start a program that says something
-when it is asked to stop:
-
-```bash
-python3 -c '
-import signal, time
-signal.signal(signal.SIGTERM, lambda *_: (print("SIGTERM — saving my work"), exit(0)))
-print("working…"); time.sleep(300)' &
-kill %1          # SIGTERM
-```
-
-```
-working…
-SIGTERM — saving my work
-```
-
-Now run exactly the same thing and use `kill -9 %1` instead:
-
-```
-working…
-[1]+  Killed    python3 -c …
-```
-
-No *"saving my work"* line — the handler never got to run. **That is the whole
-difference**, and the rest of this row is about which of the two your deploys
-are doing.
-
-Every ordinary deploy sends `SIGTERM` first: a new image, `rollout restart`,
-scaling from 4 pods to 2, a node being drained. It is the normal, polite path —
-and this app's shutdown code only runs on that path.
-
-##### Second: what is a "run", and what does "in flight" mean?
-
-- **A run** is the job that answers *one* question. It starts when the analyst
-  presses send and ends when the last word has been saved.
-- It lives **only inside that one server process**, in memory. No other server
-  knows it exists. There is no queue, no job table, nothing on disk.
-- **In flight** means started and not finished yet.
-
-The word is borrowed from aircraft, and the analogy is exact: when an airport
-closes, planes already in the air still have to land. You cannot un-take-off a
-run. You either let it finish, or it is lost.
-
-##### Third: what gets saved, and when
-
-One question is **two** writes to the database, far apart:
-
-| Time | What is happening | Saved? |
+| Time | What happens | Saved to Postgres? |
 | --- | --- | --- |
-| 0s | analyst presses send | **yes** — the question row |
-| 0–60s | the model writes the answer, word by word, streaming to the browser | no, not yet |
+| 0s | Priya presses send | **yes** — the question row |
+| 0–60s | the model writes the answer | no, not yet |
 | 60s | the last word arrives | **yes** — the answer row |
 
-For that whole minute the database holds a question with no answer. **That is
-normal** — while the run is alive.
+**3. In between, the answer exists only in one pod's memory.** There is no
+queue, no job table, no file. The half-written answer is a Python object inside
+one process. If that pod goes, it goes with it — and no other pod can see it or
+take over, because a pod cannot read another pod's memory.
 
-##### Fourth: where a run lives, in pod terms
+**Now a deploy arrives at second 20.** Kubernetes tells the pod to stop, by
+sending `SIGTERM`:
 
-This is the part that makes the rest obvious, so it is worth being literal.
-
-**A pod here is one Python process.** One container, one `uvicorn`, one block of
-RAM. `replicas: 2` means two identical copies of that — and *nothing in RAM is
-shared between them*. Not a variable, not a file, nothing.
-
-Here is what is actually inside each one while Priya is waiting for an answer:
-
-```
-Pod cfa-backend-7d9f-aaaa                  Pod cfa-backend-7d9f-bbbb
-├── the compiled graph, model clients      ├── the compiled graph, model clients
-├── Socket.IO sessions                     ├── Socket.IO sessions
-│     sid-1 → Priya  ← her open socket     │     sid-2 → Ravi
-└── _in_flight = { Task(Priya's answer) }  └── _in_flight = { }
-                     ▲                                        ▲
-                     the run                                  empty — this pod
-                                                              has never heard
-                                                              of Priya
-```
-
-`_in_flight` is a real Python `set` in
-[`api/socket.py`](../backend/Analyzer/api/socket.py). When Priya presses send,
-*that pod* creates an `asyncio.Task` and puts it in *that set*. **The task is
-the run.** There is no queue, no job row, no file — the only evidence the run
-exists is an object in one pod's memory.
-
-**Why only that pod can finish it.** Follow the chain:
-
-| Link | Consequence |
-| --- | --- |
-| Priya's browser holds a socket to pod `aaaa` | the sticky cookie from row 3 put it there |
-| the run streams tokens into *that* socket | it is writing into an object only `aaaa` has |
-| the answer row is written when the stream ends | by the same task, in the same process |
-
-So "pod `aaaa` goes away" and "Priya's answer is lost" are the same sentence.
-Pod `bbbb` cannot help: it has no task, no socket, and no way to look inside
-`aaaa` to discover either.
-
-##### A rollout, pod by pod
-
-Priya asks at **14:30:00**. Someone deploys at **14:30:20**. Four snapshots:
-
-**1. Before — two pods, one of them busy**
-
-```
-$ kubectl -n cfa get pods -l app.kubernetes.io/name=cfa-backend
-NAME                    READY   STATUS    AGE
-cfa-backend-7d9f-aaaa   1/1     Running   3d     ← Priya's run is in this RAM
-cfa-backend-7d9f-bbbb   1/1     Running   3d
-```
-
-**2. The deploy starts.** `maxSurge: 1, maxUnavailable: 0` means the new pod is
-created *first* — nothing is taken away until a replacement is serving:
-
-```
-NAME                    READY   STATUS              AGE
-cfa-backend-7d9f-aaaa   1/1     Running             3d    ← still streaming to Priya
-cfa-backend-7d9f-bbbb   1/1     Running             3d
-cfa-backend-9c2e-cccc   0/1     ContainerCreating   2s    ← the new version
-```
-
-**3. `cccc` is Ready, so `aaaa` is told to go.** This is the whole row, and it
-all happens *inside* `aaaa`:
-
-```
-NAME                    READY   STATUS        AGE
-cfa-backend-7d9f-aaaa   1/1     Terminating   3d    ← the 60 seconds that matter
-cfa-backend-9c2e-cccc   1/1     Running       40s
-```
-
-| Clock | Inside pod `aaaa` |
-| --- | --- |
-| +0s | `preStop` starts: sleep 15. The gateway stops routing **new** requests here. Priya's existing socket is untouched. |
-| +15s | `SIGTERM`. FastAPI's lifespan reaches `await drain(120)`. |
-| +15s | `drain` looks in `_in_flight`, finds one task, logs `Waiting up to 120s for 1 run(s) to finish`. |
-| +15–40s | The model keeps writing. Tokens keep streaming to Priya, out of a pod that is already Terminating. |
-| +40s | The task finishes, writes the answer row, and leaves `_in_flight`. |
-| +40s | `All 1 in-flight run(s) finished`. The process exits. |
-
-**4. After.** `aaaa` is gone, and so is everything that was in its RAM:
-
-```
-NAME                    READY   STATUS    AGE
-cfa-backend-7d9f-bbbb   1/1     Running   3d
-cfa-backend-9c2e-cccc   1/1     Running   1m
-```
-
-##### What Priya sees, in each case
-
-| | With the drain | Without it |
+| Signal | Means | Can the app run any code first? |
 | --- | --- | --- |
-| The answer on screen | finishes normally, out of a dying pod | freezes mid-sentence |
-| Her socket | closes when `aaaa` exits — the client reconnects to `bbbb` or `cccc` | closes immediately |
-| The dossier after a reload | question **and** answer | a question, alone, forever |
+| `SIGTERM` | "please stop when you can" | **yes** — this is the one deploys send |
+| `SIGKILL` | "stop now" | **no** — the kernel just removes it |
 
-Two things to take from that table. The drain does not *prevent* the
-reconnect — the socket lives in the pod that is leaving, so it always closes.
-What it prevents is the **missing answer row**. And a reconnect is cheap: her
-browser gets a new `sid` on a surviving pod and the dossier is read from
-Postgres, which every pod can see.
-
-##### "Why doesn't it just retry?"
-
-This is the question everyone asks, and the answer is what makes the row matter:
-
-- Nothing wrote down "this question still needs an answer". The only record that
-  a run existed was the run itself, in that process's memory.
-- The browser is not retrying either. It is holding a socket that just closed,
-  waiting for words that will never come.
-- The next server to start has no way to tell a question that is *stranded* from
-  a question that is *being answered right now on another server*. (That is the
-  sweep, in the next row, and it is why it waits 30 minutes.)
-
-##### The solution, in pod terms
-
-Everything above is the problem. Here is the fix seen the same way — and it is
-one idea, applied three times.
-
-**The answer starts in the wrong place.** While the model is writing, the
-answer exists only as text in one pod's RAM. RAM dies with the pod. Postgres
-does not, and every pod can read it. So the whole job is: **get the answer out
-of RAM and into Postgres before that pod disappears.**
+Without a drain, the process obeys instantly, 40 seconds short:
 
 ```mermaid
 flowchart LR
-  subgraph P["Pod aaaa — private RAM"]
-    R["the run<br/>holding the answer text"]
+  subgraph POD["Pod aaaa — private memory"]
+    R["the answer, 20s of 60s written"]
   end
-  R -->|"the only way out"| DB[("Postgres<br/>every pod can read this")]
-  R -.->|"if the pod exits first"| G["gone — nothing<br/>can recover it"]
+  R -.->|"pod exits at once — memory erased"| G["gone"]
+  R -->|"never got here"| DB[("Postgres<br/>question ✓  answer ✗")]
   classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
   classDef bad fill:#fdecea,stroke:#c0392b,color:#7b1c14
-  classDef good fill:#e8f6ec,stroke:#1e8449,color:#14532d
   class R step
-  class DB good
-  class G bad
+  class G,DB bad
 ```
 
-**Fix 1 — the drain: give the run time to make that move.**
+The database is left like this, permanently:
 
-The pod is leaving either way. The drain simply refuses to exit while
-`_in_flight` still has a task in it, which is exactly long enough for the
-answer to reach Postgres.
+| seq | role | content |
+| --- | --- | --- |
+| 7 | user | "summarise the risk factors" |
+| — | — | *the answer row that was never written* |
+
+And nothing retries it: the run only ever existed in that pod's memory, and
+Priya's browser is holding a socket that just closed.
+
+##### The solution
+
+The answer needs about 40 more seconds to get from **pod memory** into
+**Postgres**. So the app asks for them:
+
+> On `SIGTERM`, do not exit yet. Wait for the answers already being written —
+> up to `SHUTDOWN_DRAIN_SECONDS` (120) — *then* exit.
 
 ```mermaid
-flowchart TB
-  S["14:30:20 — SIGTERM arrives at pod aaaa"] --> Q{"is _in_flight empty?"}
-  Q -->|"no drain: never asked"| X1["pod exits at 14:30:20<br/>RAM erased mid-answer"]
-  X1 --> D1[("Postgres:<br/>Q7 alone, forever")]
-  Q -->|"drain: 1 task, so wait"| W["pod stays alive, still streaming<br/>Waiting up to 120s for 1 run(s)"]
-  W --> F["14:31:00 — task finishes,<br/>writes the answer row"]
-  F --> D2[("Postgres:<br/>Q7 + A8")]
-  D2 --> X2["*now* the pod exits<br/>RAM erased, nothing lost"]
+flowchart LR
+  S["SIGTERM at 20s"] --> W["pod stays alive<br/>still streaming, taking no new work"]
+  W --> F["60s: answer finishes<br/>and is written"]
+  F --> DB[("Postgres<br/>question ✓  answer ✓")]
+  DB --> X["*now* the pod exits"]
   classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
-  classDef bad fill:#fdecea,stroke:#c0392b,color:#7b1c14
   classDef good fill:#e8f6ec,stroke:#1e8449,color:#14532d
-  classDef warn fill:#fff4e0,stroke:#b7791f,color:#7c4a03
   class S step
-  class Q warn
-  class X1,D1 bad
-  class W,F,D2,X2 good
+  class W,F,DB,X good
 ```
 
-**Fix 2 — the grace period: make the kubelet allow the wait.**
-
-There is a third actor in the room, and it is holding an axe. The kubelet does
-not know or care that pod `aaaa` is in the middle of something.
-
-```mermaid
-flowchart TB
-  T["SIGTERM to pod aaaa"] --> P["pod: I need until 14:31:00"]
-  T --> K["kubelet: starts its own timer"]
-  K -->|"grace 30s"| K1["14:30:50 SIGKILL<br/>pod erased mid-drain"]
-  K1 --> B1[("Postgres:<br/>Q7 alone — the drain<br/>changed nothing")]
-  K -->|"grace 180s"| K2["timer never fires<br/>the pod leaves on its own at 14:31:00"]
-  K2 --> B2[("Postgres:<br/>Q7 + A8")]
-  classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
-  classDef bad fill:#fdecea,stroke:#c0392b,color:#7b1c14
-  classDef good fill:#e8f6ec,stroke:#1e8449,color:#14532d
-  classDef warn fill:#fff4e0,stroke:#b7791f,color:#7c4a03
-  class T,P step
-  class K warn
-  class K1,B1 bad
-  class K2,B2 good
-```
-
-**Fix 3 — the sweep: repair it later, through the one thing pods share.**
-
-When the pod is killed outright there is no move to make — the answer was
-erased with the RAM. So the fix cannot be about that pod at all. Instead a
-*different* pod, starting later, reads the shared database, spots the damage,
-and writes the missing row itself.
-
-```mermaid
-flowchart TB
-  subgraph dead["Pod aaaa — SIGKILL, no code ran"]
-    R["the run and the answer text"]
-  end
-  R -.->|"erased, never written"| DB[("Postgres<br/>Q7 alone")]
-  subgraph fresh["Pod cccc — started 30+ minutes later"]
-    S["sweep: read Postgres"]
-  end
-  DB --> S
-  S --> W["Q7 with nothing after it,<br/>and far too old to be live"]
-  W --> DB2[("Postgres:<br/>Q7 + A8 = interrupted")]
-  classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
-  classDef bad fill:#fdecea,stroke:#c0392b,color:#7b1c14
-  classDef good fill:#e8f6ec,stroke:#1e8449,color:#14532d
-  class R bad
-  class DB bad
-  class S,W step
-  class DB2 good
-```
-
-Notice what pod `cccc` did **not** need: it never learned anything about pod
-`aaaa`, never contacted it, never inspected it. It could not have — `aaaa` no
-longer exists. It only read the state they both share. That is the only kind of
-repair a pod can perform on another pod's damage, and it is why the fix is
-"look at Postgres at startup" rather than anything cleverer.
-
-**All three, in one line each**
-
-| Row | The fix, said in pods |
-| --- | --- |
-| **4a drain** | the dying pod stays alive long enough to move its answer from RAM into Postgres |
-| **4c grace period** | the kubelet is told to permit that wait, instead of killing the pod half-way through it |
-| **4b sweep** | a *different* pod, later, repairs what never made it out — using the only thing pods share |
-##### `_in_flight` prevents nothing — it is a list, not a lock
-
-Worth saying outright, because the name sounds protective and it is not:
+**How it does that, which is smaller than it sounds.** Every answer being
+written is registered in a set, and at shutdown one function waits on that set:
 
 ```python
-_in_flight: set[asyncio.Task] = set()
+running = {task for task in _in_flight if not task.done()}
+if not running:
+    return 0                                     # nothing in hand — exit now
+await asyncio.wait(running, timeout=timeout)     # ← the entire mechanism
 ```
 
-It is an ordinary Python `set`. Putting a task in it does not protect the task,
-guard the pod, or block anything. Taking a task out of it does not cancel
-anything. It holds no lock and refuses no request.
+That `await` is the whole fix. **The pod stays alive because a function has not
+returned yet** — nothing is locked, and Kubernetes is told nothing. While the
+await is waiting, the process is still running, and a running process can still
+finish its answers and write them.
 
-Its entire job is to answer **one question, once**: *"what am I still holding?"*
-— asked by `drain()` at shutdown, and by nobody else. The list is this section;
-the function that reads it is the next one.
+##### Three things the drain is not
 
-| | |
+| It is not | Because |
 | --- | --- |
-| What it does | keeps a reference to every answer currently being written, so shutdown has something to wait on |
-| What it does **not** do | protect a task, protect the pod, delay a deploy, prevent a `SIGKILL`, or retry anything |
-| If you deleted it | every run would still work exactly as it does now — right up to the first shutdown, which would exit instantly and lose them all, because `drain()` would look for work in hand and find an empty set |
-| Where it lives | one pod's RAM, like everything else in this row. Pod `bbbb` has its own, and it is empty |
+| **a way to stop the pod dying** | the pod is going either way. The drain only postpones the app's *own* exit; it is a request for time, not a refusal to leave |
+| **a delay to your deploy** | the replacement pod was created *first* (`maxSurge: 1`) and is already serving. Nothing is waiting on this pod |
+| **a guarantee** | if the platform's grace period is shorter than the wait, the pod is killed mid-drain and you are back where you started. That is the next row |
 
-Think of it as a clipboard by the door listing who is still in the building —
-not a lock on the door. The clipboard does not stop anyone leaving. It is just
-what you read before turning the lights off.
+And its patience is finite: if 120 seconds pass with a run still going, it logs
+the loss, **does not cancel the task**, and exits anyway — the process is
+leaving regardless, and cancelling a half-written answer cannot make it any more
+saved. Those lost runs are what the *sweep* cleans up, in the row after next.
 
-There is one incidental benefit: a strong reference stops Python's garbage
-collector reclaiming a task mid-`await`. That is a language detail, not the
-purpose.
+##### What Priya sees
 
-##### How `drain()` actually works, line by line
+| | With the drain | Without it |
+| --- | --- | --- |
+| The answer on screen | finishes normally, out of a pod that is already `Terminating` | freezes mid-sentence |
+| Her socket | closes when the pod finally exits — the browser reconnects to a surviving pod | closes immediately |
+| The dossier after a reload | question **and** answer | a question, alone, forever |
 
-`_in_flight` is the list. `drain()` is the function that reads it, and it is
-short enough to go through in full
-([`api/socket.py`](../backend/Analyzer/api/socket.py)):
+The drain does not prevent the reconnect — her socket lives in the pod that is
+leaving, so it always closes. What it prevents is the **missing answer row**.
 
-```python
-async def drain(timeout: float) -> int:
-    running = {task for task in _in_flight if not task.done()}
-    if not running:
-        return 0
-
-    logger.info("Waiting up to %.0fs for %d run(s) to finish", timeout, len(running))
-    done, pending = await asyncio.wait(running, timeout=timeout)
-    if pending:
-        logger.warning("%d run(s) did not finish in time — their answers are lost …", len(pending))
-    else:
-        logger.info("All %d in-flight run(s) finished", len(done))
-    return len(pending)
-```
-
-| The line | In plain English |
-| --- | --- |
-| `running = {…if not task.done()}` | take a snapshot of the answers still being written, right now |
-| `if not running: return 0` | nothing in hand → return immediately. **This is why a quiet pod still exits in under a second** |
-| `logger.info("Waiting up to …")` | the line you grep for. It says how many runs and how long it will give them |
-| `await asyncio.wait(running, timeout=timeout)` | **the entire mechanism.** Sit here until those tasks finish, or the clock runs out |
-| `if pending:` | some did not finish. Say so, loudly, and say what it cost |
-| *(no `task.cancel()` anywhere)* | the ones that ran out of time are **left alone**, not cancelled. The process is leaving either way, and cancelling a half-written answer cannot make it any more saved |
-| `return len(pending)` | how many answers were lost. Zero is the pass |
-
-**Where it is called from** — the shutdown half of the app's lifespan
-([`main.py`](../backend/Analyzer/main.py)):
-
-```python
-    yield                                        # ← the app serves requests here
-    await drain(settings.SHUTDOWN_DRAIN_SECONDS)
-    await leases.close()
-    await message_cache.close()
-```
-
-Everything above `yield` is startup; everything below it runs while the process
-is shutting down. By the time `drain()` is reached, new requests have already
-stopped arriving — so it is only ever waiting for work the pod was *already*
-holding, never for new work to appear.
-
-**So how does it "prevent" anything?** It does not, and this is the sentence
-that makes the whole row click:
-
-> The pod stays alive because **a function has not returned yet.**
-
-That is all. `await asyncio.wait(...)` is an ordinary await. While it is
-waiting, the lifespan's shutdown has not finished, so uvicorn has not exited, so
-the process is still running — and a process that is still running is one whose
-tasks can still finish and still write their rows to Postgres.
-
-No lock is taken. Kubernetes is not told anything. Nothing is protected. A
-coroutine is simply taking its time to return, and everything the drain achieves
-is a side effect of the process still being alive while it does.
-
-```mermaid
-flowchart TB
-  S["SIGTERM"] --> L["lifespan resumes after yield"]
-  L --> D["await drain(120)"]
-  D --> W{"anything in _in_flight?"}
-  W -->|"no"| R0["return 0 — exit in milliseconds"]
-  W -->|"yes"| A["await asyncio.wait(tasks, timeout=120)"]
-  A --> T1["tasks finish → they write their answer rows"]
-  A --> T2["timeout → log the loss, cancel nothing"]
-  T1 --> E["drain returns → lifespan ends → process exits"]
-  T2 --> E
-  classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
-  classDef good fill:#e8f6ec,stroke:#1e8449,color:#14532d
-  classDef bad fill:#fdecea,stroke:#c0392b,color:#7b1c14
-  classDef warn fill:#fff4e0,stroke:#b7791f,color:#7c4a03
-  class S,L,D,A step
-  class W warn
-  class R0,T1,E good
-  class T2 bad
-```
-
-##### What the drain is *not*
-
-The natural way to read all of the above is *"the pod is busy, so it cannot be
-terminated"*. That is the one wrong conclusion to take away, so it is worth
-saying plainly:
-
-> **The drain is a request for time, not a refusal to leave.**
-
-Being busy protects a pod from nothing. Nothing in this application can decline
-a shutdown, delay a deploy, or hold a pod open. The moment `SIGTERM` arrives,
-that pod is going away — the decision was made by whoever ran the deploy, and
-the pod was not consulted.
-
-All the drain does is **postpone the app's own `exit()`** for as long as its
-budget allows:
-
-| What people assume | What actually happens |
-| --- | --- |
-| the pod is protected while a task is running | the pod is **already doomed**; the task changes nothing about that |
-| the drain blocks the rollout | the rollout is already going; a new pod was created *before* this one was told to leave |
-| the pod stays up until the work is done | it stays up until the work is done **or** the platform's patience runs out — whichever comes first |
-| a busy pod cannot be killed | `kubectl delete pod --force --grace-period=0` kills it instantly. So does the node dying. Neither is negotiable |
-
-And the app's own patience is finite too. If `SHUTDOWN_DRAIN_SECONDS` expires
-with a run still going, `drain()` logs `did not finish in time`, **does not
-cancel the task**, and exits anyway — the process is leaving either way, and
-cancelling a half-written answer cannot make it any more saved.
-
-So the accurate sentence, and the one to remember:
-
-> The pod is leaving. The drain asks for enough time to get the answer into
-> Postgres first — and the **kubelet** decides whether it gets that time. Which
-> is the next row.
-
-##### The one idea underneath all of this
-
-> A pod cannot look inside another pod's memory.
-
-That single sentence is the drain (only `aaaa` can finish `aaaa`'s run), the
-sweep (a new pod cannot tell a dead run from a live one elsewhere — next row),
-and the sticky cookie (only the pod holding a `sid` knows that `sid`).
-
-And because every problem is that sentence, every fix is one of exactly two
-answers to it:
-
-| The fix | Rows that use it |
-| --- | --- |
-| **Move it into Postgres** — the one thing all pods can read | 4a drain (before the pod dies), 4b sweep (after it died), 5 message positions, 6/7 startup locks |
-| **Keep the client on the pod that already has it** | 3 sticky handshake |
-
-That is the whole design. When you meet a new failure in this app, the useful
-first question is not "what broke" but *"was something important living in one
-pod's RAM?"* — and the fix will be one of those two rows.
 ##### Settings involved
 
 | Setting | What it does | Default | Get it wrong and… |
 | --- | --- | --- | --- |
-| `SHUTDOWN_DRAIN_SECONDS` | How many seconds shutdown waits for answers still being written | `120` | too low and slow answers are cut off. It must be **longer** than your slowest answer and **shorter** than the platform's grace period |
-| `terminationGracePeriodSeconds` | Not an env var — a Kubernetes manifest field. How long the platform waits after `SIGTERM` before sending `SIGKILL`. | `30` | set below the drain and the drain never gets to finish — that is the Grace period row |
+| `SHUTDOWN_DRAIN_SECONDS` | How many seconds shutdown waits for answers still being written | `120` | too low and slow answers are cut off. Must be **longer** than your slowest answer and **shorter** than the platform's grace period |
+| `terminationGracePeriodSeconds` | Not an env var — a Kubernetes manifest field, and the deadline this wait has to fit inside | `30` | anything below the drain and the drain never finishes — the next row is entirely about this |
 
 ##### Where it is handled
 
-[`api/socket.py`](../backend/Analyzer/api/socket.py) — every run registers itself in a set while
-it is alive, and `drain()` simply waits on that set:
+[`api/socket.py`](../backend/Analyzer/api/socket.py) — the registry and the
+wait:
 
 ```python
 _in_flight: set[asyncio.Task] = set()      # answers currently streaming
@@ -1123,17 +769,17 @@ async def drain(timeout: float) -> int:
     ...
 ```
 
-and [`main.py`](../backend/Analyzer/main.py) calls it on the way out, after new connections have
-already stopped arriving:
+`_in_flight` is a plain `set` — a clipboard by the door listing who is still in
+the building, not a lock on it. It protects nothing; it exists so that shutdown
+can answer *"what am I still holding?"*.
+
+[`main.py`](../backend/Analyzer/main.py) calls it on the way out, after new
+requests have already stopped arriving:
 
 ```python
-    yield                                   # ← the app runs here
+    yield                                   # ← the app serves requests here
     await drain(settings.SHUTDOWN_DRAIN_SECONDS)
 ```
-
-Whatever is still running when the timeout expires is **left alone rather than
-cancelled** — the process is about to exit either way, and cancelling a run
-halfway cannot make its answer any more written.
 
 Find it in the repo: `grep -rn "SCALING FIX #4a" backend deploy`
 
@@ -1143,11 +789,10 @@ Ask for something long (a summary of a whole filing, not "hello"), and while the
 words are still streaming:
 
 ```bash
-kill -TERM <uvicorn pid>                            # locally
-kubectl -n cfa rollout restart deploy/cfa-backend   # on Kubernetes
+kubectl -n cfa rollout restart deploy/cfa-backend
 ```
 
-A pass is **both** of these lines in the leaving server's log:
+A pass is **both** of these lines in the leaving pod's log:
 
 ```
 INFO  api.socket  Waiting up to 120s for 1 run(s) to finish
@@ -1161,19 +806,12 @@ WARNING  api.socket  1 run(s) did not finish in time — their answers are lost�
 ```
 
 Then check the database, because the log is a claim and the ledger is the
-evidence. Every `user` row must be followed by an `assistant` row:
+evidence — every `user` row must be followed by an `assistant` row:
 
 ```sql
 SELECT seq, role, status FROM messages
 WHERE conversation_id = '…' ORDER BY seq;
 ```
-
-And the negative worth doing once: `kill -9` instead of `kill -TERM`. No drain
-lines appear at all, because no code ran — which is the next row.
-
-**Why more servers make it worse.** A rolling deploy stops every pod in turn, so
-every answer being written *anywhere* in the deployment is at stake on every
-deploy. With one instance you only paid this at restarts.
 
 **Fix:** wait for in-flight runs on shutdown. **Handled** — the test is that the
 wait really happens. → [§7](#7-break-4--the-drain-and-the-sweep)
@@ -2400,6 +2038,23 @@ configuration rather than code:
 The rest are already handled in the code. What you are testing there is that
 they *stay* handled — which is why each of them has a negative to run first:
 take the handling away, watch it fail, put it back.
+
+**And the one idea underneath all of them:**
+
+> A pod cannot look inside another pod's memory.
+
+That single sentence is the drain (only the pod holding a run can finish it),
+the sweep (a new pod cannot tell a dead run from a live one elsewhere), and the
+sticky cookie (only the pod holding a `sid` knows that `sid`). So every fix here
+is one of exactly two answers to it:
+
+| The fix | Rows that use it |
+| --- | --- |
+| **Move it into Postgres** — the one thing every pod can read | 4a drain (before the pod dies), 4b sweep (after it died), 5 message positions, 6/7 startup locks |
+| **Keep the client on the pod that already has it** | 3 sticky handshake |
+
+When you meet a new failure in this app, the useful first question is not "what
+broke" but *"was something important living in one pod's RAM?"*
 
 ---
 
