@@ -934,6 +934,36 @@ repair a pod can perform on another pod's damage, and it is why the fix is
 | **4a drain** | the dying pod stays alive long enough to move its answer from RAM into Postgres |
 | **4c grace period** | the kubelet is told to permit that wait, instead of killing the pod half-way through it |
 | **4b sweep** | a *different* pod, later, repairs what never made it out — using the only thing pods share |
+##### `_in_flight` prevents nothing — it is a list, not a lock
+
+Worth saying outright, because the name sounds protective and it is not:
+
+```python
+_in_flight: set[asyncio.Task] = set()
+```
+
+It is an ordinary Python `set`. Putting a task in it does not protect the task,
+guard the pod, or block anything. Taking a task out of it does not cancel
+anything. It holds no lock and refuses no request.
+
+Its entire job is to answer **one question, once**: *"what am I still holding?"*
+— asked by `drain()` at shutdown, and by nobody else.
+
+| | |
+| --- | --- |
+| What it does | keeps a reference to every answer currently being written, so shutdown has something to wait on |
+| What it does **not** do | protect a task, protect the pod, delay a deploy, prevent a `SIGKILL`, or retry anything |
+| If you deleted it | every run would still work exactly as it does now — right up to the first shutdown, which would exit instantly and lose them all, because `drain()` would look for work in hand and find an empty set |
+| Where it lives | one pod's RAM, like everything else in this row. Pod `bbbb` has its own, and it is empty |
+
+Think of it as a clipboard by the door listing who is still in the building —
+not a lock on the door. The clipboard does not stop anyone leaving. It is just
+what you read before turning the lights off.
+
+There is one incidental benefit: a strong reference stops Python's garbage
+collector reclaiming a task mid-`await`. That is a language detail, not the
+purpose.
+
 ##### What the drain is *not*
 
 The natural way to read all of the above is *"the pod is busy, so it cannot be
@@ -1384,6 +1414,63 @@ flowchart TB
   class K bad
   class G good
 ```
+
+**"I use Argo CD, not the kubelet — does any of this apply?"**
+
+Yes, all of it, unchanged. Argo CD is not an alternative to the kubelet;
+nothing is. They are different layers, and you always have both:
+
+```mermaid
+flowchart TB
+  G["you push a commit<br/>bumping the image tag"] --> A["Argo CD<br/>notices, and applies the manifest"]
+  A --> D["Deployment controller<br/>runs the rollout: maxSurge 1, maxUnavailable 0"]
+  D --> K["kubelet, on the node<br/>sends SIGTERM, counts the grace period, sends SIGKILL"]
+  K --> P["your pod<br/>preStop, then drain"]
+  classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
+  classDef warn fill:#fff4e0,stroke:#b7791f,color:#7c4a03
+  classDef good fill:#e8f6ec,stroke:#1e8449,color:#14532d
+  class G,A step
+  class D step
+  class K warn
+  class P good
+```
+
+Argo CD only replaces the **top box**. Everything below it is the same whether
+the manifest arrived from a Git commit, from `kubectl apply` typed by you, or
+from a `rollout restart`. The kubelet is the thing that runs containers on a
+node — if pods are running, a kubelet is running them, and it is the only thing
+that ever sends your process a signal.
+
+So: `terminationGracePeriodSeconds` is read from the manifest Argo CD applied,
+enforced by the kubelet, exactly as described above.
+
+| Layer | Decides | Does **not** decide |
+| --- | --- | --- |
+| **Argo CD** | *when* a change is applied, and what the manifest says | how pods are replaced, or how long they get to stop |
+| **Deployment controller** | the order: new pod up, then old pod told to go | anything that happens inside a pod |
+| **kubelet** | `preStop`, `SIGTERM`, the grace-period countdown, `SIGKILL` | what your app does with the time |
+
+**Three Argo-specific things worth knowing**, none of which change the fixes:
+
+1. **`Replace=true` / `Force=true` sync options.** Normal sync is `kubectl
+   apply`, which updates the Deployment and gets you an ordinary rolling
+   update. These options delete and recreate objects instead — a blunter path.
+   If you enable them, re-run the drain test in this row before trusting the
+   shutdown, because "delete and recreate" is not the same journey as "roll".
+2. **A ConfigMap change does not restart pods.** `SHUTDOWN_DRAIN_SECONDS` lives
+   in `cfa-config`. Argo CD will happily sync a new value and report the app
+   Healthy while every running pod still holds the **old** one — the value is
+   read at startup. Change it and roll the Deployment, or nothing you changed
+   is in effect.
+3. **Self-heal re-applies drift.** If someone runs `kubectl set env` by hand to
+   test one of these settings, self-heal will quietly put it back. That is
+   Argo CD working correctly, and it will look like your test refusing to take.
+
+**And the sweep (Fix 3)?** Also unchanged. It runs when a pod starts, and Argo
+CD's rollouts start pods like any other. The only thing that would stop the
+sweep is nothing ever restarting — a deployment so stable that no pod has
+booted since the crash. Which is worth knowing: on a very quiet cluster, a
+stranded question can wait a long time for a startup to come along.
 
 **Settings involved**
 
