@@ -692,6 +692,118 @@ The word is borrowed from aircraft, and the analogy is exact: when an airport
 closes, planes already in the air still have to land. You cannot un-take-off a
 run. You either let it finish, or it is lost.
 
+##### Third: where a run lives, in pod terms
+
+This is the part that makes the rest obvious, so it is worth being literal.
+
+**A pod here is one Python process.** One container, one `uvicorn`, one block of
+RAM. `replicas: 2` means two identical copies of that — and *nothing in RAM is
+shared between them*. Not a variable, not a file, nothing.
+
+Here is what is actually inside each one while Priya is waiting for an answer:
+
+```
+Pod cfa-backend-7d9f-aaaa                  Pod cfa-backend-7d9f-bbbb
+├── the compiled graph, model clients      ├── the compiled graph, model clients
+├── Socket.IO sessions                     ├── Socket.IO sessions
+│     sid-1 → Priya  ← her open socket     │     sid-2 → Ravi
+└── _in_flight = { Task(Priya's answer) }  └── _in_flight = { }
+                     ▲                                        ▲
+                     the run                                  empty — this pod
+                                                              has never heard
+                                                              of Priya
+```
+
+`_in_flight` is a real Python `set` in
+[`api/socket.py`](../backend/Analyzer/api/socket.py). When Priya presses send,
+*that pod* creates an `asyncio.Task` and puts it in *that set*. **The task is
+the run.** There is no queue, no job row, no file — the only evidence the run
+exists is an object in one pod's memory.
+
+**Why only that pod can finish it.** Follow the chain:
+
+| Link | Consequence |
+| --- | --- |
+| Priya's browser holds a socket to pod `aaaa` | the sticky cookie from row 3 put it there |
+| the run streams tokens into *that* socket | it is writing into an object only `aaaa` has |
+| the answer row is written when the stream ends | by the same task, in the same process |
+
+So "pod `aaaa` goes away" and "Priya's answer is lost" are the same sentence.
+Pod `bbbb` cannot help: it has no task, no socket, and no way to look inside
+`aaaa` to discover either.
+
+##### A rollout, pod by pod
+
+Priya asks at **14:30:00**. Someone deploys at **14:30:20**. Four snapshots:
+
+**1. Before — two pods, one of them busy**
+
+```
+$ kubectl -n cfa get pods -l app.kubernetes.io/name=cfa-backend
+NAME                    READY   STATUS    AGE
+cfa-backend-7d9f-aaaa   1/1     Running   3d     ← Priya's run is in this RAM
+cfa-backend-7d9f-bbbb   1/1     Running   3d
+```
+
+**2. The deploy starts.** `maxSurge: 1, maxUnavailable: 0` means the new pod is
+created *first* — nothing is taken away until a replacement is serving:
+
+```
+NAME                    READY   STATUS              AGE
+cfa-backend-7d9f-aaaa   1/1     Running             3d    ← still streaming to Priya
+cfa-backend-7d9f-bbbb   1/1     Running             3d
+cfa-backend-9c2e-cccc   0/1     ContainerCreating   2s    ← the new version
+```
+
+**3. `cccc` is Ready, so `aaaa` is told to go.** This is the whole row, and it
+all happens *inside* `aaaa`:
+
+```
+NAME                    READY   STATUS        AGE
+cfa-backend-7d9f-aaaa   1/1     Terminating   3d    ← the 60 seconds that matter
+cfa-backend-9c2e-cccc   1/1     Running       40s
+```
+
+| Clock | Inside pod `aaaa` |
+| --- | --- |
+| +0s | `preStop` starts: sleep 15. The gateway stops routing **new** requests here. Priya's existing socket is untouched. |
+| +15s | `SIGTERM`. FastAPI's lifespan reaches `await drain(120)`. |
+| +15s | `drain` looks in `_in_flight`, finds one task, logs `Waiting up to 120s for 1 run(s) to finish`. |
+| +15–40s | The model keeps writing. Tokens keep streaming to Priya, out of a pod that is already Terminating. |
+| +40s | The task finishes, writes the answer row, and leaves `_in_flight`. |
+| +40s | `All 1 in-flight run(s) finished`. The process exits. |
+
+**4. After.** `aaaa` is gone, and so is everything that was in its RAM:
+
+```
+NAME                    READY   STATUS    AGE
+cfa-backend-7d9f-bbbb   1/1     Running   3d
+cfa-backend-9c2e-cccc   1/1     Running   1m
+```
+
+##### What Priya sees, in each case
+
+| | With the drain | Without it |
+| --- | --- | --- |
+| The answer on screen | finishes normally, out of a dying pod | freezes mid-sentence |
+| Her socket | closes when `aaaa` exits — the client reconnects to `bbbb` or `cccc` | closes immediately |
+| The dossier after a reload | question **and** answer | a question, alone, forever |
+
+Two things to take from that table. The drain does not *prevent* the
+reconnect — the socket lives in the pod that is leaving, so it always closes.
+What it prevents is the **missing answer row**. And a reconnect is cheap: her
+browser gets a new `sid` on a surviving pod and the dossier is read from
+Postgres, which every pod can see.
+
+##### The one idea underneath all of this
+
+> A pod cannot look inside another pod's memory.
+
+That single sentence is the drain (only `aaaa` can finish `aaaa`'s run), the
+sweep (a new pod cannot tell a dead run from a live one elsewhere — next row),
+and the sticky cookie (only the pod holding a `sid` knows that `sid`). Every
+break in this section is a consequence of it, which is why the fixes are all
+either "write it to Postgres" or "keep the client on the pod that knows".
 ##### What gets saved, and when
 
 One question is **two** writes to the database, far apart:
@@ -907,9 +1019,21 @@ and the sweep ignores it.
 | question, nothing after it, **2 minutes old** | a server is answering it **right now** (maybe another replica) | leave it completely alone |
 | question, nothing after it, **45 minutes old** | the server answering it died | write the "interrupted" answer |
 
-**There is no flag that tells them apart.** The run lives only in some
-process's memory, and this server cannot see into another server's memory. All
-it has is the clock.
+**There is no flag that tells them apart.** In pod terms: the sweep is running
+inside a pod that just booted, and the run it is wondering about — if it is
+alive at all — is an `asyncio.Task` in a *different pod's* `_in_flight` set. It
+cannot read that set. It cannot ask. Both pods see the same two rows in
+Postgres, and Postgres is all they share.
+
+So all it has is the clock:
+
+```
+Pod cfa-backend-9c2e-cccc (just started)     Pod cfa-backend-7d9f-bbbb (running)
+└── sweeping…                                └── _in_flight = { Task(Q7) }
+      sees: Q7, no answer, 2 min old                        ▲
+      cannot see: ─────────────────────────────────────────┘
+      so: leave it alone
+```
 
 So the rule is simply: **if it is older than `STALE_RUN_MINUTES` (30), nothing
 alive could still be working on it.** No real answer takes half an hour. Below
