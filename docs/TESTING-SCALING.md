@@ -161,124 +161,363 @@ kubectl -n cfa logs -l app.kubernetes.io/name=cfa-backend --tail=-1 --prefix
 The numbers are the rows of [SCALING.md §1](SCALING.md#1-the-verdict-table), so
 a failure here has a paragraph there explaining itself.
 
-### What each row is actually about
+### The problem behind each row, in plain English
 
-The matrix says *where* you can reproduce a break. This says **what the break
-is** — the symptom a user would report, what has to become true for it to stop,
-and whether that is a line of config you owe the deployment or something the
-code already does for you.
+One block per row of the matrix above, same numbers. Each one is the same four
+things: **what a user would complain about**, a picture of what is actually
+happening, **one example**, and the single thing that fixes it — plus whether
+that is yours to do or something the code already handles.
 
-**1 — JWT signing key.** With `JWT_SECRET_KEY` unset, every instance invents
-its own random key at boot. A token minted by A is gibberish to B, and the
-refresh token the browser reaches for was signed with the same dead key, so the
-recovery fails too and the user is simply signed out. It is not a clean outage:
-roughly `(N-1)/N` of requests fail, so it reads as "it logs me out sometimes".
-*Solve:* one key, shared by every instance, and said out loud at startup rather
-than discovered at somebody's first login. **Yours — set `JWT_SECRET_KEY`.**
+---
 
-**2 — Embedded vector store.** Chroma runs embedded, on the pod's own disk, so
-a filing uploaded through A physically exists only on A. Questions afterwards
-land wherever the balancer sends them, and B has nothing to retrieve. There is
-no error — the model answers anyway, from nothing. Silent wrong answers are
-worse than a 500, which is why this is the test that matters most. *Solve:* one
-store every instance reads and writes (`CHROMA_HOST`), plus a startup gate so a
-pod that cannot reach it never serves traffic. **Yours — run Chroma, set the
-host.**
+#### 1 · JWT signing key
 
-**3 — Handshake routing.** A Socket.IO polling handshake is several HTTP
-requests that must all land on the same process. Round-robin splits them, the
-second request is told its session does not exist, the client reconnects, and
-splits again — a loop, not a failure. No application code can fix it: the
-routing decision is made before the request reaches the app. *Solve:* cookie
-affinity at the ingress, proven by watching the cookie be obeyed rather than
-merely be set. **Yours — sticky ingress.**
+**Complaint:** *"It logs me out at random."*
 
-**4 (drain) — In-flight runs die on shutdown.** An answer takes a minute; a
-shutdown takes an instant. Kill the process mid-stream and the question stays
-unanswered forever while the user watches a spinner. On one instance you pay
-this at restarts; on N you pay it N times per rollout. *Solve:* on SIGTERM,
-stop accepting new work and wait for the runs already in hand. **Handled —
-watch the wait, and the answer land.**
+With `JWT_SECRET_KEY` unset, every instance invents its own secret at boot. A
+token signed by Pod A is unreadable to Pod B — and so is the refresh token the
+browser reaches for to recover, so the session is simply gone.
 
-**4 (sweep) — Runs that died without warning.** Not every death is polite: OOM
-kills, node loss, `SIGKILL`. Those leave a row that claims to be running, which
-nothing will ever finish and nothing will ever report. *Solve:* at startup,
-close out runs abandoned by a previous life — without touching runs another
-live instance is streaming right now. That cutoff is the whole difficulty.
-**Handled — test both halves.**
+```mermaid
+sequenceDiagram
+  participant U as Browser
+  participant A as Pod A — secret-A
+  participant B as Pod B — secret-B
+  U->>A: login
+  A-->>U: token signed with secret-A
+  U->>B: next request, same token
+  B-->>U: 401 — secret-B cannot read this
+```
 
-**4 (grace period) — The platform has to wait for the drain.** Draining is
-theatre if Kubernetes kills the pod at the 30-second default while the drain is
-still 40 seconds from done. You are back to losing answers, now with logs that
-say you were handling it. *Solve:* `terminationGracePeriodSeconds` comfortably
-above the drain budget, verified by a pod that exits *before* the deadline, not
-at it. **Yours — the manifest.**
+**Example:** four pods, no shared key → three of every four requests fail. It is
+never broken twice in a row, which is why it gets reported as "flaky login"
+rather than as an outage.
 
-**5 — Two writers, one message position.** Two writes claim the same position
-in one dossier; the loser's insert violates the unique constraint, the error is
-caught, and an answer vanishes with nothing anywhere saying so. This is not a
-scaling bug — two browser tabs against one instance will do it — and it is the
-one nobody goes looking for. *Solve:* claim positions one at a time (the
-conversation row is locked while a position is taken), and check the arithmetic
-afterwards: `count(*) = max(seq)`, every question followed by an answer.
-**Handled — verify by counting.**
+**Fix:** the same `JWT_SECRET_KEY` on every instance, from one Secret.
+**Yours.** → [§4](#4-break-1--the-shared-signing-key)
 
-**6 — Broadcasting.** Nothing broadcasts today: every event is emitted to the
-one connection that asked for it, so there is no cross-pod delivery to get
-wrong. That is the finding, and it is only true until someone adds a shared
-dossier or a presence indicator — an `emit` to a room reaches only the pod
-holding that room. *Solve:* keep it true (a `grep` is the entire test), and set
-`SOCKETIO_MESSAGE_QUEUE_URL` the day the feature lands. **Not yet — but check
-that it is still not yet.**
+---
 
-**10 — Postgres connections.** Each instance opens up to 15 connections (pool 5
-plus 10 overflow) against a single `max_connections`. Multiply by N and the
-ceiling is reached by the size of the deployment rather than by the load; the
-failure then lands on whichever request connects next, not on whatever caused
-it. *Solve:* arithmetic — N × (pool + overflow), plus headroom for migrations
-and your own `psql`, under `max_connections` — and no pooled connection held
-across a model call, since a minute-long checkout is what turns headroom into
-exhaustion. **Yours — size it.**
+#### 2 · Embedded vector store
 
-**12 — Rolling summaries.** When history crosses the fold threshold, two
-instances can decide to fold the same dossier in the same moment. The cost is a
-duplicate call to the model that is already the bottleneck. *Solve:* a
-best-effort Redis lease so one instance folds, and ordering that makes a
-duplicate harmless anyway — `summary_through_seq` only moves forwards, and a
-fold that lands stale is discarded. That is precisely why the lease is allowed
-to be best-effort rather than a lock in Postgres. **Handled — prove the
-duplicate costs money, not correctness.**
+**Complaint:** *"It answered, but it clearly has not read my filing."*
 
-**6/7 — Housekeeping and the schema race.** Work meant to happen once happens
-on every pod: all of them prune and sweep at boot, and two pods calling
-`create_all` against an empty database race each other until one exits with
-`DuplicateTable` — a crash loop on the first deploy of the day. *Solve:* a
-Postgres advisory lock around both, so one instance does the work and the
-others skip and say so. Test the skipper as carefully as the winner. **Handled
-— one winner, one line saying it stood aside.**
+Chroma runs embedded, so an uploaded filing lands on the disk of whichever pod
+received it. The next question goes wherever the balancer sends it. There is no
+error — the model answers anyway, from nothing.
 
-**11 (fail-soft) — Redis is a cache, never the truth.** The question is not
-whether Redis can go down but what it costs when it does — and whether retrying
-turns one outage into a timeout on every single request. *Solve:* with Redis at
-zero replicas the whole analyst path still works at the price of one extra
-`SELECT` per question, and both subsystems switch themselves off once and stay
-off until a restart. The consequence to remember: bring Redis back and you must
-restart the backends too. **Handled — a deployment that *needs* Redis to be
-correct has a bug in it.**
+```mermaid
+flowchart LR
+  U["analyst uploads a 10-K"] --> A["Pod A"]
+  A --> DA[("Pod A disk<br/>the filing is here")]
+  Q["analyst asks about it"] --> B["Pod B"]
+  B --> DB[("Pod B disk<br/>empty")]
+  DB --> ANS["a confident answer<br/>with no filing behind it"]
+```
 
-**11 (ordering) — Cached tails, written by two instances.** Rows are appended
-to the cache by whichever instance recorded the message, so two instances
-writing one dossier can push them in an order that does not match the positions
-they were given. Read the conversation back and it is scrambled. *Solve:* sort
-by `seq` on the way out, so cache and database answer identically — same
-response from both instances, and the same again after a `FLUSHALL`. **Handled
-— cache and database agreeing is the property.**
+**Example:** upload on A, ask on B. B logs `Retrieved 0 chunk(s)` and returns a
+summary that reads perfectly well and cites nothing. This is the worst kind of
+break: it looks like success.
 
-If you are triaging rather than testing: the rows marked **Yours** (1, 2, 3,
-the grace period, 10) are configuration, they are the ones a deployment can get
-wrong today, and none of them are fixable in application code. The rows marked
-**Handled** are already done — you are testing that they *stay* done, which is
-why every one of them has a negative to run first.
+**Fix:** one Chroma server that every instance points at (`CHROMA_HOST`).
+**Yours.** → [§5](#5-break-2--the-shared-vector-store)
+
+---
+
+#### 3 · Handshake routing
+
+**Complaint:** *"It connects, disconnects, connects again — forever."*
+
+A Socket.IO polling handshake is several HTTP requests that must all land on the
+same process. Round-robin sends step two to a pod that has never heard of the
+session, so the client starts over — and splits again.
+
+```mermaid
+sequenceDiagram
+  participant C as Browser
+  participant LB as Load balancer
+  participant A as Pod A
+  participant B as Pod B
+  C->>LB: handshake, step 1
+  LB->>A: creates session sid-1
+  C->>LB: handshake, step 2 for sid-1
+  LB->>B: who is sid-1?
+  B-->>C: unknown session — reconnect
+  Note over C,B: and round again, forever
+```
+
+**Example:** two pods → roughly half of all handshakes fail, so the app "works
+if you refresh a couple of times".
+
+**Fix:** cookie affinity at the ingress. No amount of application code can fix
+this: the routing decision happens before the request reaches the app.
+**Yours.** → [§6](#6-break-3--the-sticky-handshake)
+
+---
+
+#### 4 · In-flight runs — the drain
+
+**Complaint:** *"I asked something and the answer never came."*
+
+An answer takes a minute; a shutdown takes an instant. Kill the process
+mid-stream and the question sits unanswered forever behind a spinner.
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant P as Pod
+  U->>P: a question that needs 60s
+  Note over P: streaming… 20s in
+  P->>P: SIGTERM — exits immediately
+  P--xU: nothing written, spinner forever
+```
+
+**Example:** one rollout across three pods loses every answer in flight on all
+three. At one instance you pay this at restarts; at N you pay it every deploy.
+
+**Fix:** on SIGTERM, stop taking new work and wait for the runs already in hand.
+**Handled** — test that the wait really happens.
+→ [§7](#7-break-4--the-drain-and-the-sweep)
+
+---
+
+#### 4 · In-flight runs — the sweep
+
+**Complaint:** *"That question from Tuesday is still thinking."*
+
+Not every death is polite — an OOM kill, a lost node, a `SIGKILL`. Nothing gets
+the chance to write anything, so the row still claims the run is going.
+
+```mermaid
+flowchart LR
+  K["pod killed, no warning"] --> R["the row still says: running"]
+  R --> S{"a new pod starts"}
+  S -->|"sweep on"| C["closed out as interrupted<br/>the user sees an error, not a spinner"]
+  S -->|"sweep off"| F["waits forever, silently"]
+```
+
+**Example:** force-kill mid-answer, back-date the row, restart. The log says
+`Closed out 1 interrupted run(s) from a previous life` and the dossier shows an
+interrupted answer instead of nothing.
+
+**Fix:** at startup, close out runs abandoned by a previous life — while leaving
+alone the runs another live pod is streaming right now. **Handled** — that
+cutoff is the whole difficulty. → [§7c](#7c-the-sweep)
+
+---
+
+#### 4 · Grace period
+
+**Complaint:** *"The drain is right there in the logs, and the answer is
+still gone."*
+
+Draining only helps if the platform waits for it. Kubernetes waits 30 seconds by
+default; the drain may need two minutes.
+
+```mermaid
+flowchart LR
+  T["SIGTERM"] --> D["the drain needs 60s"]
+  D --> A["grace 30s → SIGKILL at 30s<br/>answer lost anyway"]
+  D --> B["grace 180s → finished at 60s<br/>answer saved"]
+```
+
+**Example:** `terminationGracePeriodSeconds: 30` with
+`SHUTDOWN_DRAIN_SECONDS=120` — the pod exits at exactly 30s, every single time.
+A pod that exits *at* the deadline was killed, not drained.
+
+**Fix:** a grace period comfortably above the drain budget. **Yours — the
+manifest.** → [§7b](#7b-the-grace-period-rig-3)
+
+---
+
+#### 5 · Two writers, one message position
+
+**Complaint:** *"The answer was on screen, then I refreshed and it was gone."*
+
+Every message takes the next position in the dossier. Two writers read the same
+"next" and one insert loses the unique constraint. The error is caught on
+purpose — so nothing, anywhere, says an answer was dropped.
+
+```mermaid
+sequenceDiagram
+  participant T1 as Tab 1
+  participant T2 as Tab 2
+  participant DB as Postgres
+  T1->>DB: what is next? → 5
+  T2->>DB: what is next? → 5
+  T1->>DB: INSERT seq=5 ✓
+  T2->>DB: INSERT seq=5 ✗ duplicate
+  Note over T2: the error is swallowed —<br/>the answer is simply gone
+```
+
+**Example:** two browser tabs on one dossier, ask in both, then count:
+`count(*)` must equal `max(seq)`. A gap is somebody's missing answer. Note that
+this needs no second instance at all — it is older than any thought of scaling.
+
+**Fix:** lock the conversation row while a position is being claimed.
+**Handled** — verify by counting.
+→ [§8](#8-break-5--two-writers-one-position)
+
+---
+
+#### 6 · Broadcasting
+
+**Complaint:** none today — and that *is* the finding.
+
+Every event is sent to the one connection that asked for it, so there is nothing
+to deliver across pods and nothing to get wrong. It breaks the day somebody adds
+a shared dossier or a "someone is typing" dot.
+
+```mermaid
+flowchart LR
+  N["emit to one connection<br/>— what the app does today"] --> OK["fine at any number of pods"]
+  R["emit to a room<br/>— the day someone adds it"] --> A["Pod A: delivered"]
+  R --> B["Pod B: never hears about it"]
+```
+
+**Example:** `grep -rn "sio.emit" backend/Analyzer | grep -v "to=sid"` returns
+nothing. The day it returns a line, this row stops being free.
+
+**Fix:** set `SOCKETIO_MESSAGE_QUEUE_URL` when that day arrives. **Not yet —
+the test is just confirming it is still not yet.**
+→ [§9](#9-break-6--broadcasting-before-the-feature-exists)
+
+---
+
+#### 10 · Postgres connections
+
+**Complaint:** *"sorry, too many clients already"* — for everyone,
+including you.
+
+Each instance holds up to 15 connections (a pool of 5 plus 10 overflow).
+Postgres has one ceiling shared by all of them, so adding pods raises the number
+even when traffic does not.
+
+```mermaid
+flowchart LR
+  P1["Pod 1 — up to 15"] --> PG[("Postgres<br/>max_connections = 100")]
+  P2["Pod 2 — up to 15"] --> PG
+  P3["…8 pods = 120"] --> PG
+  PG --> X["the 101st connection is refused<br/>— maybe a user, maybe your migration"]
+```
+
+**Example:** 8 pods × 15 = 120 against a default `max_connections = 100`.
+Nothing was under load; the size of the deployment did it on its own.
+
+**Fix:** make the arithmetic fit — N × (pool + overflow), plus headroom for
+migrations and your own `psql`, under `max_connections` — and never hold a
+pooled connection across a model call. **Yours.**
+→ [§10](#10-postgres-connections)
+
+---
+
+#### 12 · Rolling summaries
+
+**Complaint:** two identical "summarised" lines in the log, a minute of the
+model spent twice.
+
+When history gets long it is folded into a summary. Two instances can decide to
+fold the same dossier in the same moment.
+
+```mermaid
+flowchart LR
+  T["history crosses the threshold"] --> A["Pod A takes the Redis lease → folds"]
+  T --> B["Pod B finds it taken → skips"]
+  A --> S["summary_through_seq only ever moves forwards<br/>a fold that lands late and stale is discarded"]
+  B --> S
+```
+
+**Example:** turn Redis off and both instances fold. Check
+`summary_through_seq` — it still only moves forwards. The duplicate cost one
+extra model call and nothing else.
+
+**Fix:** a best-effort lease in Redis. It is *allowed* to be best-effort
+precisely because a duplicate costs money, not correctness. **Handled.**
+→ [§11](#11-rolling-summaries-and-the-lease)
+
+---
+
+#### 6/7 · Housekeeping and the schema race
+
+**Complaint:** *"The first deploy came up with one pod in CrashLoopBackOff."*
+
+Work meant to happen once happens on every pod. All of them prune and sweep at
+boot — and two of them creating the schema at once is the version that actually
+crashes.
+
+```mermaid
+flowchart LR
+  S["two pods boot together"] --> L{"advisory lock"}
+  L -->|"wins"| A["Pod A creates the schema, prunes, sweeps"]
+  L -->|"loses"| B["Pod B skips — and says so in the log"]
+  S -.->|"without the lock"| C["both run CREATE TABLE<br/>one exits with DuplicateTable"]
+```
+
+**Example:** `DROP SCHEMA` on a scratch database and start both pods together.
+Both must reach Ready, with exactly one
+`Another instance is doing the startup housekeeping`.
+
+**Fix:** a Postgres advisory lock around both jobs. **Handled** — test the pod
+that skips as carefully as the one that wins.
+→ [§12](#12-startup-housekeeping-and-the-schema-race)
+
+---
+
+#### 11 · Redis fail-soft
+
+**Complaint:** there should not be one — that is the whole test.
+
+Redis is a cache and a lease store, never the truth. The question is what an
+outage actually costs, and whether retrying turns one outage into a timeout on
+every single request.
+
+```mermaid
+flowchart LR
+  Q["a question"] --> R{"is Redis up?"}
+  R -->|"yes"| C["cached tail — fast"]
+  R -->|"no"| D["one extra SELECT — slower, same answer"]
+  D --> O["the cache switches itself off once<br/>and stays off until a restart"]
+```
+
+**Example:** scale Redis to zero replicas and run the whole path — sign in,
+upload, ask, reload. All of it works. The consequence to remember: when Redis
+comes back you must restart the backends too, or you will conclude the cache is
+broken when it is only switched off.
+
+**Fix:** nothing. **Handled** — a deployment that *needs* Redis to be correct
+has a bug in it. → [§13](#13-redis--proving-it-fails-soft)
+
+---
+
+#### 11 · Cache ordering
+
+**Complaint:** *"The conversation is jumbled — but it fixes itself eventually."*
+
+Each instance appends to the cached tail as it records a message, so two
+instances writing one dossier can push rows in an order that does not match the
+positions they were given.
+
+```mermaid
+flowchart LR
+  A["Pod A records seq 3"] --> R[("cached tail<br/>stored as 4, then 3")]
+  B["Pod B records seq 4"] --> R
+  R --> S["sort by seq on the way out"]
+  S --> G["always 3 then 4 —<br/>cache and database agree"]
+```
+
+**Example:** read the same dossier from both instances, then `FLUSHALL` and read
+it a third time. All three responses identical; only the last one is slower.
+
+**Fix:** sort by `seq` on read. **Handled** — cache and database agreeing is the
+property. → [§14](#14-ordering-and-the-week-old-pod)
+
+---
+
+**The short version:** rows 1, 2, 3, the grace period and 10 are **yours** —
+they are configuration, they are what a deployment can still get wrong today,
+and no application code decides them. Everything else is already handled, so
+what you are testing is that it *stays* handled — which is why each of those has
+a negative to run first.
 
 ---
 
