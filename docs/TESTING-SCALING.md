@@ -262,6 +262,22 @@ sequenceDiagram
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | How long a ticket is good for | `15` | too short = constant refreshes; too long = a stolen ticket lives longer |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | How long the backup ticket is good for | `14` | shorter means people log in again more often |
 
+**Worked example**
+
+Run the numbers, because the failure rate is a formula: a request works only if
+it lands back on the pod that signed the ticket, so **`(N-1)/N` of requests
+fail**.
+
+| Setup | What happens | What you see |
+| --- | --- | --- |
+| 1 pod, key unset | works — until a restart, which invalidates every ticket at once | "everyone got logged out after the deploy" |
+| 2 pods, key unset | **1 in 2** requests rejected | "it logs me out every other click" |
+| 4 pods, key unset | **3 in 4** rejected | unusable, but *intermittently*, so it gets filed as flaky |
+| any number, one shared key | 0 rejected | nothing to see |
+
+Note the first row: even a single pod is affected, just not visibly until it
+restarts. Scaling does not create this bug, it makes it constant.
+
 **Where it is handled**
 
 [`main.py`](../backend/Analyzer/main.py) — the startup check, so a broken deployment says so
@@ -372,6 +388,23 @@ flowchart TB
 Do not "fix" this by pointing two pods at one shared volume — an embedded store
 is a library writing SQLite on local disk, and two writers corrupt the index.
 The only fix is a Chroma server they both talk to over HTTP.
+
+**Worked example**
+
+Same shape of formula, but the failure is silent: a question is answered
+correctly only if it lands on the pod that received the upload.
+
+| Setup | Questions answered from the filing | What the analyst sees |
+| --- | --- | --- |
+| 1 pod, embedded | 100% | correct answers |
+| 2 pods, embedded | **50%** | half the answers quietly invented |
+| 4 pods, embedded | **25%** | mostly invented, all fluent |
+| any number, `CHROMA_HOST` set | 100% | correct answers |
+
+Compare that middle column with row 1's. A wrong login is *visible* and gets
+reported in minutes; a wrong answer looks exactly like a right one. Which is
+why this is the most important test in the file even though it fails less
+loudly.
 
 **Where it is handled**
 
@@ -562,6 +595,26 @@ the cookie only matters for the ones who cannot be.
 | *(none in the app)* | Stickiness is a **gateway** setting, not an application one. Nothing you can change in the backend affects it. | — | the routing is already decided before the request reaches your code |
 | `CORS_ORIGINS` | Which origins the browser may call the API from | `["*"]` | the handshake is blocked by the browser before routing is even involved |
 
+**Worked example**
+
+A polling handshake is several requests that must all land together, so the
+odds compound against you.
+
+| Setup | Chance a handshake completes | What the user sees |
+| --- | --- | --- |
+| 1 pod | 100% | works |
+| 2 pods, no stickiness | ~50% per attempt | connects, drops, connects — a loop |
+| 4 pods, no stickiness | ~25% per attempt | a loop that almost never resolves |
+| any number, sticky cookie | 100% | works |
+
+"~50% per attempt" is the part that makes it a *loop* rather than an error: the
+client retries, and each retry is another coin toss. It never gives up and it
+never succeeds.
+
+And the reason it can hide for months: this only affects **polling**. Everyone
+whose browser gets a WebSocket is fine, so the deployment looks healthy until
+one user sits behind a proxy that blocks upgrades.
+
 **Where it is handled**
 
 Not in the application at all — it is
@@ -751,6 +804,26 @@ leaving, so it always closes. What it prevents is the **missing answer row**.
 | --- | --- | --- | --- |
 | `SHUTDOWN_DRAIN_SECONDS` | How many seconds shutdown waits for answers still being written | `120` | too low and slow answers are cut off. Must be **longer** than your slowest answer and **shorter** than the platform's grace period |
 | `terminationGracePeriodSeconds` | Not an env var — a Kubernetes manifest field, and the deadline this wait has to fit inside | `30` | anything below the drain and the drain never finishes — the next row is entirely about this |
+
+##### Worked example
+
+The drain's number is a **ceiling, not a duration**. Watch what actually
+happens with `SHUTDOWN_DRAIN_SECONDS: 120`:
+
+| The answer needs | The pod waits | Then |
+| --- | --- | --- |
+| 5 seconds | 5 seconds | exits. The other 115 are never used |
+| 60 seconds | 60 seconds | exits, answer saved |
+| nothing in flight | **0 seconds** | exits immediately — this is the normal case |
+| 200 seconds | 120, then gives up | logs `did not finish in time`, exits, **answer lost** |
+
+So raising the drain costs nothing on a quiet pod. It is not a delay you pay on
+every deploy; it is a limit on how long you are *willing* to wait when there is
+something worth waiting for.
+
+That last row is one of two ways to lose an answer on a deploy. The other is the
+next row, and they look different in the log — which is how you tell them
+apart.
 
 ##### Where it is handled
 
@@ -955,6 +1028,33 @@ flowchart TB
 | --- | --- | --- | --- |
 | `STALE_RUN_MINUTES` | How old an unanswered question must be before the sweep may touch it | `30` | **too low** and the sweep declares *live* runs on other replicas dead — it writes "interrupted" while the analyst is watching the words arrive. **Too high** and stuck questions sit there longer |
 | `SHUTDOWN_DRAIN_SECONDS` | The polite path, from the row above | `120` | a working drain means the sweep rarely finds anything — which is the goal. The sweep is the safety net, not the plan |
+
+##### Worked example
+
+`STALE_RUN_MINUTES` is a trade between two costs: how long a stuck question
+sits there, versus the risk of declaring a live run dead.
+
+A question is stranded at **10:00**, with `STALE_RUN_MINUTES: 30`:
+
+| Next pod start | Question's age | What the sweep does |
+| --- | --- | --- |
+| 10:00:05 (the replacement pod) | 5 seconds | nothing — far too new |
+| 10:20 (another deploy) | 20 minutes | nothing — still inside the window |
+| 10:45 (any restart) | 45 minutes | **writes the interrupted row** |
+| never (no pod restarts) | growing | nothing. The question waits for a startup to come along |
+
+Now the same setting tuned badly — `STALE_RUN_MINUTES: 1`, with a genuinely slow
+answer running on another pod:
+
+| Time | Pod bbbb | Pod cccc (just started) |
+| --- | --- | --- |
+| 10:00:00 | starts a 90-second answer | — |
+| 10:01:10 | still writing | sweeps, sees a 70-second-old question, **declares it dead** |
+| 10:01:30 | finishes and writes the real answer | — |
+
+The dossier now shows *"this run was interrupted"* immediately followed by the
+correct answer. That is the damage the 30 minutes prevents, and it is worse than
+the problem: a spinner is at least honest.
 
 ##### Where it is handled
 
@@ -1213,6 +1313,34 @@ worst case         135s   <  180s terminationGracePeriodSeconds  ✅
 The grace period has to cover **both**, not just the drain — that is the sum
 people forget, and it is why 180 rather than 150.
 
+**Worked example**
+
+This is the pair of numbers that decides whether the row above was worth
+writing. Everything assumes an answer that needs 60 seconds and a `preStop` of
+15.
+
+| Grace period | Drain | What happens | The log |
+| --- | --- | --- | --- |
+| **180** | **120** | preStop 15 + answer 60 = 75s. Pod exits on its own, well inside 180 | `Waiting up to 120s…` **then** `All 1 in-flight run(s) finished` |
+| **60** | 120 | preStop eats 15, leaving 45. `SIGKILL` at 60, mid-answer | `Waiting up to 120s…` **then silence** |
+| 180 | **30** | the drain gives up at 30s, before the answer is done | `Waiting up to 30s…` then `1 run(s) did not finish in time` |
+| 30 *(the default)* | 120 | killed at 30, before even the preStop finishes | usually nothing at all |
+
+Read the log column, because it is the whole diagnostic:
+
+- **Two lines** → it worked.
+- **One line, then nothing** → the *grace period* is too short. The process was
+  killed before it could even complain. This is the one that looks healthy.
+- **One line, then a warning** → the *drain* is too short. The app noticed and
+  said so.
+
+Row two is worth staring at: the drain was configured generously, the log shows
+it starting, and the answer was still lost. Nothing in the app is wrong — it was
+never given the time it asked for.
+
+**The arithmetic to keep:** `preStop + SHUTDOWN_DRAIN_SECONDS + margin ≤
+terminationGracePeriodSeconds`. Here: 15 + 120 + 45 = 180.
+
 **Where it is handled**
 
 [`backend.yaml`](../deploy/minikube/base/backend.yaml) — two fields, and they have to be read
@@ -1327,6 +1455,28 @@ sequenceDiagram
 | *(none)* | There is no switch for this. The row lock is in the code and always on. | — | — |
 | `DATABASE_URL` | Must point at Postgres — the lock and the unique constraint both live there | local Postgres | anything else and neither the constraint nor the lock exists |
 
+**Worked example**
+
+The collision needs two writes in the same instant, so it is rare per event and
+certain over time.
+
+| Setup | Collisions | The ledger |
+| --- | --- | --- |
+| one tab, questions one at a time | none | `count(*) = max(seq)` |
+| two tabs, asking together | one write loses | `count(*) = 7`, `max(seq) = 8` |
+| an upload racing a question in one dossier | one write loses | same gap |
+| any of the above, with the row lock | none | `count(*) = max(seq)` |
+
+A worked case. The dossier holds 6 messages. Priya asks in two tabs at once:
+
+```
+tab A: highest is 6 → writes 7 ✓        tab B: highest is 6 → writes 7 ✗
+```
+
+Both answers stream to the screen. One is stored. After a refresh the dossier
+has 7 rows and a highest seq of 8 — one gap, one lost answer, and no error
+anywhere in the app or the log.
+
 **Where it is handled**
 
 Two halves. The constraint that makes the bug *possible to detect*, in
@@ -1436,6 +1586,21 @@ flowchart TB
 Turning the queue on costs a Redis round trip per event, which is why it is off
 until something actually needs it.
 
+**Worked example**
+
+Nothing to measure today — the whole point of the row. But the day a room-based
+feature ships, it is the same `(N-1)/N` as rows 1 and 3, applied to viewers:
+
+| Pods | Viewers of one shared dossier | How many see an update |
+| --- | --- | --- |
+| 1 | 10 | 10 |
+| 2 | 10 | **~5** |
+| 4 | 10 | **~2.5** |
+| any, with `SOCKETIO_MESSAGE_QUEUE_URL` | 10 | 10 |
+
+And it will pass every test you run on your laptop, because one process is one
+pod.
+
 **Where it is handled**
 
 Today it is handled by the *shape of every call* in
@@ -1534,6 +1699,30 @@ flowchart TB
 | `DB_POOL_RECYCLE_SECONDS` | Reopen a connection after this long | `1800` | too high and idle connections get dropped by a proxy or firewall without the app noticing |
 | `DATABASE_URL` | Which database, as an async URL | local Postgres | a non-async URL is refused at startup, on purpose |
 | `max_connections` | **Postgres server** setting, not an app one | often `100` | this is the ceiling all of the above must fit under |
+
+**Worked example**
+
+The ceiling is reached by the *size* of the deployment, so the arithmetic is the
+whole test. This repo sets `DB_POOL_SIZE: 5`, `DB_MAX_OVERFLOW: 5` and
+`max_connections=200`:
+
+| Pods | Worst case, per pod × pods | Plus migrations, health checks, your `psql` | Fits in 200? |
+| --- | --- | --- | --- |
+| 2 *(what this repo runs)* | 2 × 10 = 20 | ~30 | yes, with room to spare |
+| 10 | 10 × 10 = 100 | ~110 | yes |
+| 20 | 20 × 10 = 200 | ~210 | **no** |
+
+Now the same cluster on the library defaults (`5` + `10` = 15 per pod) against a
+stock `max_connections=100`:
+
+| Pods | Worst case | Fits in 100? |
+| --- | --- | --- |
+| 4 | 60 | yes |
+| 6 | 90 | just |
+| 8 | 120 | **no** — and nothing was under load |
+
+The failure lands on whoever connects *next*, which is usually a health check or
+a migration rather than the traffic that filled the pool.
 
 **Where it is handled**
 
@@ -1644,6 +1833,22 @@ flowchart TB
 | `HISTORY_CONTEXT_MESSAGES` | Recent turns sent to the model alongside the summary | `10` | too few loses the thread; too many makes every call slower |
 | `HISTORY_CONTEXT_TOKENS` | Ceiling on that context | `1500` | too high and the model call slows down or truncates |
 
+**Worked example**
+
+The cost of getting this wrong is measured in model calls, not correctness —
+which is the argument for a best-effort lease rather than a real lock.
+
+| Setup | Folds per crossing | Cost | Summary correct? |
+| --- | --- | --- | --- |
+| 1 pod | 1 | one model call | yes |
+| 2 pods, Redis up | 1 | one model call | yes |
+| 2 pods, Redis down | up to 2 | **one wasted call**, ~30s of the model | **yes** — the later, staler fold is discarded |
+| 4 pods, Redis down | up to 4 | 3 wasted calls | yes |
+
+Compare that last column with any other row in this section. Nothing is lost and
+nothing is wrong; you paid for work twice. That is why this one is allowed to
+fail.
+
 **Where it is handled**
 
 [`core/leases.py`](../backend/Analyzer/core/leases.py) — `SET NX EX` is the entire mechanism, and
@@ -1753,6 +1958,26 @@ flowchart TB
 | `DATABASE_URL` | Where the advisory lock lives, as well as the data | local Postgres | the lock is a Postgres feature; there is nowhere else for it to be |
 | `STALE_RUN_MINUTES` | Used by the sweep that runs under this lock | `30` | see the sweep row above |
 | *(no on/off switch)* | The lock is always taken; it cannot be disabled | — | — |
+
+**Worked example**
+
+One winner, every time, whatever the pod count — and the number of *skip* lines
+is how you check it:
+
+| Pods starting together | `Another instance is doing…` lines | Pods that did the work |
+| --- | --- | --- |
+| 2 | 1 | 1 |
+| 4 | 3 | 1 |
+| 8 | 7 | 1 |
+
+The formula is `N-1`. **Zero skip lines with two pods means the lock is not
+working** — both thought they had won, and on an empty database one of them is
+about to exit with `DuplicateTable`.
+
+On a fresh database with no lock at all: 1 pod creates the schema, the other
+`N-1` race it, and each one that loses crash-loops until the winner finishes —
+a first deploy that looks broken and then heals, which is the worst kind of
+intermittent.
 
 **Where it is handled**
 
@@ -1868,6 +2093,21 @@ cache back on. The process has to restart.
 | `REDIS_HOT_WINDOW` | How many recent messages are kept per conversation | `40` | too small and most reads fall through to Postgres anyway |
 | `REDIS_KEY_PREFIX` | Namespace for the keys | `cfa` | two deployments sharing one Redis will read each other's cache |
 
+**Worked example**
+
+The point of this row is the *size* of the degradation, so here it is in
+milliseconds, on a question whose answer takes 60 seconds:
+
+| Redis | Cost of reading the history | Share of the total request |
+| --- | --- | --- |
+| up | one Redis read, ~1 ms | 0.002% |
+| **down (what happens)** | one extra `SELECT`, ~5 ms | **0.008%** |
+| down, if it retried each request | a connection timeout, ~5 **seconds** | 8%, on every request, forever |
+
+Row two is invisible. Row three would be an outage — and it is the row you get
+by "helpfully" reconnecting on every request. That is the entire reason the
+cache switches itself off and stays off.
+
 **Where it is handled**
 
 [`conversations/cache.py`](../backend/Analyzer/conversations/cache.py) — six lines, and the
@@ -1982,6 +2222,29 @@ flowchart TB
 | `HISTORY_PAGE_SIZE` | Messages returned per page | `50` | a page larger than the hot window always falls through to the database |
 | `HISTORY_MAX_PAGE_SIZE` | Ceiling a client may ask for | `200` | too high lets one request pull a huge page |
 | `REDIS_URL` | Blank means no cache, so no ordering question at all | *(empty)* | — |
+
+**Worked example**
+
+Two instances writing one dossier, in the same second:
+
+| | Postgres (assigns the number) | Redis list (order it arrived) |
+| --- | --- | --- |
+| Pod A writes | `seq 3` | *(second)* |
+| Pod B writes | `seq 4` | *(first)* |
+| stored result | 3, 4 — always correct | **4, 3 — genuinely wrong** |
+| what a reader gets | 3, 4 | **3, 4** — sorted on the way out |
+
+So the cache really is wrong, and it never matters. The test is not "is the
+cache in order" but "do both sources answer identically":
+
+| Read | Expected |
+| --- | --- |
+| from pod A | 3, 4 |
+| from pod B | 3, 4 |
+| after `FLUSHALL` (straight from Postgres) | 3, 4 — just slower |
+
+Three identical responses is the pass. Any difference means the cache is being
+trusted somewhere it should not be.
 
 **Where it is handled**
 
