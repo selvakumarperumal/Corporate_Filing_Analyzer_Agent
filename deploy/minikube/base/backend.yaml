@@ -74,6 +74,8 @@ spec:
       # after a Service is one rename away from the same surprise. Nothing
       # here uses those variables; every setting arrives from cfa-config.
       enableServiceLinks: false
+      # ── SCALING FIX #4c · the platform waits long enough for the drain to finish ────
+      # Why: docs/SCALING.md §12 · Test: docs/TESTING-SCALING.md §7b
       terminationGracePeriodSeconds: 180
       securityContext:
         # The image's own unprivileged account.

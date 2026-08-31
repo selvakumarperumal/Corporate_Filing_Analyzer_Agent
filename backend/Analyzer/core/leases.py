@@ -25,6 +25,8 @@ from core.config import settings
 logger = logging.getLogger(__name__)
 
 
+# ── SCALING FIX #12 · one instance folds a summary, not both ──────────────────────────
+# Why: docs/SCALING.md §12 · Test: docs/TESTING-SCALING.md §11
 class LeaseStore:
     """Time-boxed named claims, held in Redis when there is a Redis."""
 

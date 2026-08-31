@@ -176,6 +176,8 @@ class MessageCache:
     def _key(self, conversation_id: str) -> str:
         return f"{self._prefix}:conv:{conversation_id}:tail"
 
+    # ── SCALING FIX #11a · a Redis outage costs a SELECT, not the request ─────────────
+    # Why: docs/SCALING.md §11 · Test: docs/TESTING-SCALING.md §13
     def _disable(self, error: Exception) -> None:
         """Drop the cache after a failure rather than failing the request.
 

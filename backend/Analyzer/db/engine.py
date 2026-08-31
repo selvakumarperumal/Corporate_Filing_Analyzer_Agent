@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 Base = SQLModel
 
 
+# ── SCALING FIX #10 · the connection pool every replica multiplies ────────────────────
+# Why: docs/SCALING.md §9 · Test: docs/TESTING-SCALING.md §10
 engine: AsyncEngine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DB_ECHO,
@@ -78,6 +80,8 @@ async def init_db() -> None:
     from db.locks import held_for_transaction  # noqa: PLC0415 - avoids a cycle
 
     async with engine.begin() as connection:
+        # ── SCALING FIX #6/7 · the schema race between pods starting together ─────────
+        # Why: docs/SCALING.md §9 · Test: docs/TESTING-SCALING.md §12
         await held_for_transaction(connection, "schema")
         await connection.run_sync(SQLModel.metadata.create_all)
 

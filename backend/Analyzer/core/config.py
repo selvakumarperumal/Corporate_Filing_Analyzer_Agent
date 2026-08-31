@@ -83,6 +83,8 @@ class Settings(BaseSettings):
     # — and it costs a Redis round trip per emit, so it stays off until the
     # first broadcast (a shared dossier, the same analyst on two devices)
     # makes it necessary. ``redis://…`` turns it on.
+    # ── SCALING FIX #6 · the switch to turn on when something first broadcasts ────────
+    # Why: docs/SCALING.md Break #6 · Test: docs/TESTING-SCALING.md §9
     SOCKETIO_MESSAGE_QUEUE_URL: str = ""
 
     # How long shutdown waits for answers that are still streaming before it

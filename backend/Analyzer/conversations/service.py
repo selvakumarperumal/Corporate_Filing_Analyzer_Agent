@@ -263,6 +263,8 @@ class HistoryService:
         # Held until this transaction commits, so the read of the last position
         # and the write of the next one are one indivisible step — across
         # processes, since the lock lives in Postgres.
+        # ── SCALING FIX #5 · one writer at a time claims a message position ───────────
+        # Why: docs/SCALING.md Break #5 · Test: docs/TESTING-SCALING.md §8
         await session.exec(
             select(Conversation.id)
             .where(Conversation.id == conversation.id)
@@ -439,6 +441,8 @@ class HistoryService:
 
     # ── Interrupted runs ─────────────────────────────────────────────────
 
+    # ── SCALING FIX #4b · close out runs abandoned by a death with no warning ─────────
+    # Why: docs/SCALING.md Break #4 · Test: docs/TESTING-SCALING.md §7c
     async def sweep_interrupted_runs(
         self, older_than_minutes: int = settings.STALE_RUN_MINUTES
     ) -> int:
@@ -633,6 +637,8 @@ class HistoryService:
             await leases.release(lease)
 
 
+# ── SCALING FIX #11b · cached tails are sorted on read, never trusted as stored ───────
+# Why: docs/SCALING.md §11 · Test: docs/TESTING-SCALING.md §14
 def _in_order(messages: list[dict]) -> list[dict]:
     """The tail by position, one entry per position.
 

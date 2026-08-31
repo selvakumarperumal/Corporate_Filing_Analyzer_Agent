@@ -50,6 +50,8 @@ FALLBACK_QUERY = "Provide an executive summary and financial overview of this fi
 _in_flight: set[asyncio.Task] = set()
 
 
+# ── SCALING FIX #4a · finish in-flight answers before shutting down ───────────────────
+# Why: docs/SCALING.md Break #4 · Test: docs/TESTING-SCALING.md §7a
 async def drain(timeout: float) -> int:
     """Wait for the answers still being written. Returns how many did not land.
 

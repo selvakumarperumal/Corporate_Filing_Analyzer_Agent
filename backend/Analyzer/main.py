@@ -69,6 +69,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # forgetting filings nothing points at, and answering questions nothing
     # came back for. Whichever instance wins does both; the rest get on with
     # serving. Neither is urgent enough to wait for.
+    # ── SCALING FIX #6/7 · startup housekeeping runs once, not per pod ────────────────
+    # Why: docs/SCALING.md §9 · Test: docs/TESTING-SCALING.md §12
     async with only_one("startup-housekeeping") as mine:
         if mine:
             await _prune_orphaned_filings()
@@ -86,6 +88,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await message_cache.close()
 
 
+# ── SCALING FIX #1 · the shared signing key ───────────────────────────────────────────
+# Why: docs/SCALING.md Break #1 · Test: docs/TESTING-SCALING.md §4
 def _check_signing_key() -> None:
     """Say at startup, not at the first login, if tokens are unsigned by config.
 

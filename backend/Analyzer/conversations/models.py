@@ -110,6 +110,8 @@ class Message(SQLModel, table=True):
     __table_args__ = (
         # Ordering and cursor pagination both run on this pair, and the
         # uniqueness is what stops two writers claiming the same position.
+        # ── SCALING FIX #5 · no two messages can take one position ────────────────────
+        # Why: docs/SCALING.md Break #5 · Test: docs/TESTING-SCALING.md §8
         UniqueConstraint("conversation_id", "seq", name="uq_message_position"),
     )
 

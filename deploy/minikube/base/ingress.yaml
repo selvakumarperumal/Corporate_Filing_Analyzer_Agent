@@ -29,6 +29,8 @@ metadata:
     # instead of splitting it across both. `persistent` keeps existing clients
     # where they are when the endpoint list changes, rather than rehashing
     # everyone in the middle of a rollout.
+    # ── SCALING FIX #3 · sticky handshakes — the one fix no code can make ─────────────
+    # Why: docs/SCALING.md Break #3 · Test: docs/TESTING-SCALING.md §6
     nginx.ingress.kubernetes.io/affinity: "cookie"
     nginx.ingress.kubernetes.io/affinity-mode: "persistent"
     nginx.ingress.kubernetes.io/session-cookie-name: "cfa-sticky"

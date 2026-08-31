@@ -193,6 +193,26 @@ wrong during a rollout, read rows **4a (drain)**, **4c (grace period)**,
 **6/7 (startup jobs)** and **10 (connections)** first — those four are all
 triggered by the deploy itself.
 
+**Where these live in the code.** Every fix is tagged at the exact line that
+implements it, so the code and this file point at each other:
+
+```bash
+grep -rn "SCALING FIX" backend deploy         # all 15 sites, one line each
+grep -rn "SCALING FIX #4a" backend deploy     # just the drain
+```
+
+A tag looks like this, sitting directly above the thing it describes:
+
+```python
+# ── SCALING FIX #4a · finish in-flight answers before shutting down ───
+# Why: docs/SCALING.md Break #4 · Test: docs/TESTING-SCALING.md §7a
+async def drain(timeout: float) -> int:
+```
+
+Each row below also ends with a **Where it is handled** block quoting the real
+code or manifest — usually only a handful of lines, because most of these fixes
+are small and the difficulty was knowing they were needed.
+
 ---
 
 #### 1 · JWT signing key
@@ -241,6 +261,36 @@ sequenceDiagram
 | `JWT_SECRET_KEY` | The signature on every ticket. Must be identical on every instance. | *(empty — a random key per process)* | logins fail at random across pods, and every restart signs everyone out |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | How long a ticket is good for | `15` | too short = constant refreshes; too long = a stolen ticket lives longer |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | How long the backup ticket is good for | `14` | shorter means people log in again more often |
+
+**Where it is handled**
+
+[`main.py`](../backend/Analyzer/main.py) — the startup check, so a broken deployment says so
+before anyone logs in:
+
+```python
+def _check_signing_key() -> None:
+    if settings.JWT_SECRET_KEY:
+        return
+    _secret()                       # provokes the warning in auth.security
+    logger.warning(
+        "Tokens are signed with a key that dies with this process. Running "
+        "more than one instance this way means logins fail at random — set …"
+    )
+```
+
+…and the manifest that actually supplies the key,
+[`backend.yaml`](../deploy/minikube/base/backend.yaml):
+
+```yaml
+env:
+  - name: JWT_SECRET_KEY
+    valueFrom:
+      secretKeyRef:
+        name: cfa-secrets
+        key: jwt-secret
+```
+
+Find it in the repo: `grep -rn "SCALING FIX #1" backend deploy`
 
 **Example.** Four pods, no shared key. Each request has a one-in-four chance of
 landing back on the pod that issued the ticket, so **three of every four fail**.
@@ -323,6 +373,29 @@ Do not "fix" this by pointing two pods at one shared volume — an embedded stor
 is a library writing SQLite on local disk, and two writers corrupt the index.
 The only fix is a Chroma server they both talk to over HTTP.
 
+**Where it is handled**
+
+[`analysis/retrieval/vector_store.py`](../backend/Analyzer/analysis/retrieval/vector_store.py) —
+one `if` decides whether the deployment can scale at all:
+
+```python
+if settings.CHROMA_HOST:
+    # a client of one shared server: every instance sees the same collections
+    self._client = chromadb.HttpClient(
+        host=settings.CHROMA_HOST, port=settings.CHROMA_PORT, ssl=settings.CHROMA_SSL,
+    )
+else:
+    # embedded: a library reading *this* process's disk. One instance only.
+    self._client = chromadb.PersistentClient(path=persist_directory)
+self._shared = bool(settings.CHROMA_HOST)
+```
+
+The constructor connects immediately rather than on first use — a store it
+cannot reach raises here, during the rollout, instead of on somebody's first
+question.
+
+Find it in the repo: `grep -rn "SCALING FIX #2" backend deploy`
+
 **Example.** Two pods, so roughly **half** of all questions about a freshly
 uploaded filing are answered from nothing. Four pods and it is three quarters.
 
@@ -391,6 +464,23 @@ cookie on every later request, and all of them land on Pod A.
 | --- | --- | --- | --- |
 | *(none in the app)* | Stickiness is an **ingress** setting, not an application one. Nothing you can change in the backend affects it. | — | the routing is already decided before the request reaches your code |
 | `CORS_ORIGINS` | Which origins the browser may call the API from | `["*"]` | the handshake is blocked by the browser before routing is even involved |
+
+**Where it is handled**
+
+Not in the application at all — it is four annotations in
+[`ingress.yaml`](../deploy/minikube/base/ingress.yaml):
+
+```yaml
+nginx.ingress.kubernetes.io/affinity: "cookie"
+nginx.ingress.kubernetes.io/affinity-mode: "persistent"
+nginx.ingress.kubernetes.io/session-cookie-name: "cfa-sticky"
+nginx.ingress.kubernetes.io/session-cookie-max-age: "3600"
+```
+
+`persistent` matters during a rollout: it keeps existing clients where they are
+when the endpoint list changes, instead of rehashing everyone mid-deploy.
+
+Find it in the repo: `grep -rn "SCALING FIX #3" backend deploy`
 
 **Example.** Two pods means about **half** of all handshakes fail, so the app
 "works if you refresh a couple of times". In the browser's network tab you can
@@ -555,6 +645,37 @@ flowchart TB
 | --- | --- | --- | --- |
 | `SHUTDOWN_DRAIN_SECONDS` | How many seconds shutdown waits for answers still being written | `120` | too low and slow answers are cut off. It must be **longer** than your slowest answer and **shorter** than the platform's grace period |
 | `terminationGracePeriodSeconds` | Not an env var — a Kubernetes manifest field. How long the platform waits after `SIGTERM` before sending `SIGKILL`. | `30` | set below the drain and the drain never gets to finish — that is the Grace period row |
+
+##### Where it is handled
+
+[`api/socket.py`](../backend/Analyzer/api/socket.py) — every run registers itself in a set while
+it is alive, and `drain()` simply waits on that set:
+
+```python
+_in_flight: set[asyncio.Task] = set()      # answers currently streaming
+
+async def drain(timeout: float) -> int:
+    running = {task for task in _in_flight if not task.done()}
+    if not running:
+        return 0
+    logger.info("Waiting up to %.0fs for %d run(s) to finish", timeout, len(running))
+    done, pending = await asyncio.wait(running, timeout=timeout)
+    ...
+```
+
+and [`main.py`](../backend/Analyzer/main.py) calls it on the way out, after new connections have
+already stopped arriving:
+
+```python
+    yield                                   # ← the app runs here
+    await drain(settings.SHUTDOWN_DRAIN_SECONDS)
+```
+
+Whatever is still running when the timeout expires is **left alone rather than
+cancelled** — the process is about to exit either way, and cancelling a run
+halfway cannot make its answer any more written.
+
+Find it in the repo: `grep -rn "SCALING FIX #4a" backend deploy`
 
 ##### Example — prove it on your own deployment
 
@@ -726,6 +847,35 @@ flowchart TB
 | `STALE_RUN_MINUTES` | How old an unanswered question must be before the sweep may touch it | `30` | **too low** and the sweep declares *live* runs on other replicas dead — it writes "interrupted" while the analyst is watching the words arrive. **Too high** and stuck questions sit there longer |
 | `SHUTDOWN_DRAIN_SECONDS` | The polite path, from the row above | `120` | a working drain means the sweep rarely finds anything — which is the goal. The sweep is the safety net, not the plan |
 
+##### Where it is handled
+
+[`conversations/service.py`](../backend/Analyzer/conversations/service.py) —
+`sweep_interrupted_runs()`. The query *is* the rule from the tables above:
+
+```python
+cutoff = utcnow() - timedelta(minutes=older_than_minutes)   # 30 by default
+
+select(Message)
+    .where(Message.role == ROLE_USER)              # a question…
+    .where(col(Message.created_at) < cutoff)       # …old enough to be dead…
+    .where(                                        # …with nothing written after it
+        ~select(later.id)
+        .where(later.conversation_id == Message.conversation_id)
+        .where(col(later.seq) > Message.seq)
+        .exists()
+    )
+```
+
+Then, immediately before writing, the same check again under the conversation's
+row lock — in case another instance answered it in the meantime:
+
+```python
+if conversation.message_count > question.seq:
+    continue                                       # it landed after all
+```
+
+Find it in the repo: `grep -rn "SCALING FIX #4b" backend deploy`
+
 ##### Example — strand a run on purpose
 
 **1. Kill it the rude way**, mid-answer, so nothing gets a chance to drain:
@@ -847,6 +997,27 @@ worst case         135s   <  180s terminationGracePeriodSeconds  ✅
 The grace period has to cover **both**, not just the drain — that is the sum
 people forget, and it is why 180 rather than 150.
 
+**Where it is handled**
+
+[`backend.yaml`](../deploy/minikube/base/backend.yaml) — two fields, and they have to be read
+together:
+
+```yaml
+spec:
+  terminationGracePeriodSeconds: 180     # SIGTERM → SIGKILL budget
+  containers:
+    - lifecycle:
+        preStop:
+          exec:
+            # endpoint removal is asynchronous: without this the ingress can
+            # still be sending new connections to a pod that is shutting down
+            command: ["sh", "-c", "sleep 15"]
+```
+
+15 (preStop) + 120 (`SHUTDOWN_DRAIN_SECONDS`) = 135, comfortably under 180.
+
+Find it in the repo: `grep -rn "SCALING FIX #4c" backend deploy`
+
 **Example.** The tell is a stopwatch, not a log line:
 
 ```bash
@@ -940,6 +1111,32 @@ sequenceDiagram
 | *(none)* | There is no switch for this. The row lock is in the code and always on. | — | — |
 | `DATABASE_URL` | Must point at Postgres — the lock and the unique constraint both live there | local Postgres | anything else and neither the constraint nor the lock exists |
 
+**Where it is handled**
+
+Two halves. The constraint that makes the bug *possible to detect*, in
+[`conversations/models.py`](../backend/Analyzer/conversations/models.py):
+
+```python
+UniqueConstraint("conversation_id", "seq", name="uq_message_position")
+```
+
+and the lock that stops it happening, in
+[`conversations/service.py`](../backend/Analyzer/conversations/service.py) — the first statement
+of `record_message`, before the position is read:
+
+```python
+# Held until this transaction commits, so the read of the last position
+# and the write of the next one are one indivisible step — across
+# processes, since the lock lives in Postgres.
+await session.exec(
+    select(Conversation.id)
+    .where(Conversation.id == conversation.id)
+    .with_for_update()
+)
+```
+
+Find it in the repo: `grep -rn "SCALING FIX #5" backend deploy`
+
 **Example.** You do **not** need two servers. Open the same dossier in two
 browser tabs and ask a question in both at once. Then count:
 
@@ -1023,6 +1220,26 @@ flowchart TB
 Turning the queue on costs a Redis round trip per event, which is why it is off
 until something actually needs it.
 
+**Where it is handled**
+
+Today it is handled by the *shape of every call* in
+[`api/socket.py`](../backend/Analyzer/api/socket.py) — each one names the connection that asked:
+
+```python
+await sio.emit(event_name, payload, to=sid)          # ← to=sid, always
+```
+
+The switch for the day that changes lives in
+[`core/config.py`](../backend/Analyzer/core/config.py), and is deliberately empty:
+
+```python
+# A Socket.IO client manager, so an ``emit`` from one instance can reach a
+# connection held by another. Not needed today … ``redis://…`` turns it on.
+SOCKETIO_MESSAGE_QUEUE_URL: str = ""
+```
+
+Find it in the repo: `grep -rn "SCALING FIX #6" backend deploy`
+
 **Example.** The whole test is one command, and today it prints nothing:
 
 ```bash
@@ -1101,6 +1318,28 @@ flowchart TB
 | `DB_POOL_RECYCLE_SECONDS` | Reopen a connection after this long | `1800` | too high and idle connections get dropped by a proxy or firewall without the app noticing |
 | `DATABASE_URL` | Which database, as an async URL | local Postgres | a non-async URL is refused at startup, on purpose |
 | `max_connections` | **Postgres server** setting, not an app one | often `100` | this is the ceiling all of the above must fit under |
+
+**Where it is handled**
+
+[`db/engine.py`](../backend/Analyzer/db/engine.py) — the whole of it is the pool arguments, which
+is why the fix is arithmetic and not code:
+
+```python
+engine: AsyncEngine = create_async_engine(
+    settings.DATABASE_URL,
+    pool_size=settings.DB_POOL_SIZE,          # 5 held open, per instance
+    max_overflow=settings.DB_MAX_OVERFLOW,    # up to 10 more under load
+    pool_pre_ping=True,                       # a dead connection fails here, not mid-request
+    pool_recycle=settings.DB_POOL_RECYCLE_SECONDS,
+)
+```
+
+The other half is on the server — `max_connections=200` in
+[`postgres.yaml`](../deploy/minikube/base/postgres.yaml) (and in
+[`cnpg-cluster.yaml`](../deploy/cnpg-cluster.yaml)), which every instance's pool
+shares.
+
+Find it in the repo: `grep -rn "SCALING FIX #10" backend deploy`
 
 **Example.** Do the arithmetic before the deployment does it for you:
 
@@ -1189,6 +1428,29 @@ flowchart TB
 | `HISTORY_CONTEXT_MESSAGES` | Recent turns sent to the model alongside the summary | `10` | too few loses the thread; too many makes every call slower |
 | `HISTORY_CONTEXT_TOKENS` | Ceiling on that context | `1500` | too high and the model call slows down or truncates |
 
+**Where it is handled**
+
+[`core/leases.py`](../backend/Analyzer/core/leases.py) — `SET NX EX` is the entire mechanism, and
+the two `return True`s are the fail-soft:
+
+```python
+async def acquire(self, name: str, seconds: int) -> bool:
+    if not self.enabled:
+        return True                    # no Redis: everybody may fold
+    try:
+        # the claim and its expiry in one round trip, so a process that dies
+        # between them cannot leave a lease with no end
+        return bool(await self._redis.set(self._key(name), "1", nx=True, ex=seconds))
+    except Exception as error:
+        self._disable(error)
+        return True                    # a broken lease never blocks work
+```
+
+Note the module docstring: *"nothing here may fail a request, and nothing that
+must be correct may be built on it; that is what `db.locks` is for."*
+
+Find it in the repo: `grep -rn "SCALING FIX #12" backend deploy`
+
 **Example.** Make folds happen in minutes instead of hours:
 
 ```bash
@@ -1276,6 +1538,35 @@ flowchart TB
 | `STALE_RUN_MINUTES` | Used by the sweep that runs under this lock | `30` | see the sweep row above |
 | *(no on/off switch)* | The lock is always taken; it cannot be disabled | — | — |
 
+**Where it is handled**
+
+Two different locks, on purpose. [`main.py`](../backend/Analyzer/main.py) uses the
+**non-blocking** one — losers skip and get on with serving:
+
+```python
+async with only_one("startup-housekeeping") as mine:
+    if mine:
+        await _prune_orphaned_filings()
+        await _close_out_interrupted_runs()
+    else:
+        logger.info("Another instance is doing the startup housekeeping")
+```
+
+[`db/engine.py`](../backend/Analyzer/db/engine.py) uses the **blocking** one — a loser must not
+carry on until the schema exists:
+
+```python
+async with engine.begin() as connection:
+    await held_for_transaction(connection, "schema")
+    await connection.run_sync(SQLModel.metadata.create_all)
+```
+
+Both live in [`db/locks.py`](../backend/Analyzer/db/locks.py), and both are Postgres advisory
+locks rather than Redis leases — *"Redis is optional, so it cannot be where
+correctness lives."*
+
+Find it in the repo: `grep -rn "SCALING FIX #6/7" backend deploy`
+
 **Example.** On a **scratch** database, drop everything and start both servers
 together:
 
@@ -1360,6 +1651,29 @@ cache back on. The process has to restart.
 | `REDIS_TTL_SECONDS` | How long a cached tail lives | `3600` | too short wastes the cache; too long only wastes memory, never correctness |
 | `REDIS_HOT_WINDOW` | How many recent messages are kept per conversation | `40` | too small and most reads fall through to Postgres anyway |
 | `REDIS_KEY_PREFIX` | Namespace for the keys | `cfa` | two deployments sharing one Redis will read each other's cache |
+
+**Where it is handled**
+
+[`conversations/cache.py`](../backend/Analyzer/conversations/cache.py) — six lines, and the
+comment is the design decision:
+
+```python
+def _disable(self, error: Exception) -> None:
+    """Drop the cache after a failure rather than failing the request.
+
+    Reconnecting on every subsequent message would mean paying a timeout
+    per request for as long as Redis is down. Serving from the database is
+    both correct and faster than that; the cache comes back on restart.
+    """
+    logger.warning("Message cache disabled after a Redis error: %s", error)
+    self._redis = None
+```
+
+`self._redis = None` is what makes `enabled` false from then on — that is the
+"stays off until a restart" behaviour, written down. [`core/leases.py`](../backend/Analyzer/core/leases.py)
+has the identical method for the same reason.
+
+Find it in the repo: `grep -rn "SCALING FIX #11a" backend deploy`
 
 **Example.** Take it away completely and run the whole path — sign in, upload,
 ask, reload, read the history back:
@@ -1452,6 +1766,28 @@ flowchart TB
 | `HISTORY_PAGE_SIZE` | Messages returned per page | `50` | a page larger than the hot window always falls through to the database |
 | `HISTORY_MAX_PAGE_SIZE` | Ceiling a client may ask for | `200` | too high lets one request pull a huge page |
 | `REDIS_URL` | Blank means no cache, so no ordering question at all | *(empty)* | — |
+
+**Where it is handled**
+
+[`conversations/service.py`](../backend/Analyzer/conversations/service.py) — two lines, applied to
+every cached read:
+
+```python
+def _in_order(messages: list[dict]) -> list[dict]:
+    by_seq = {message["seq"]: message for message in messages}
+    return [by_seq[seq] for seq in sorted(by_seq)]
+```
+
+The dict comprehension also de-duplicates: a retried write that pushed the same
+row twice collapses back to one. Called on the way out of the cache:
+
+```python
+cached = await self.cache.recent(conversation.id)
+if cached is not None:
+    return _in_order(cached)
+```
+
+Find it in the repo: `grep -rn "SCALING FIX #11b" backend deploy`
 
 **Example.** Read the same dossier from both servers, then clear the cache and
 read a third time:

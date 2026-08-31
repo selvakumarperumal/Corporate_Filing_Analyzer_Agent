@@ -68,6 +68,8 @@ class VectorService:
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
         )
+        # ── SCALING FIX #2 · shared vector store instead of one per pod ───────────────
+        # Why: docs/SCALING.md Break #2 · Test: docs/TESTING-SCALING.md §5
         if settings.CHROMA_HOST:
             # A client of one shared server. Every instance sees the same
             # collections, so an upload handled by one and a question answered
