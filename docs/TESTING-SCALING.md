@@ -947,7 +947,8 @@ guard the pod, or block anything. Taking a task out of it does not cancel
 anything. It holds no lock and refuses no request.
 
 Its entire job is to answer **one question, once**: *"what am I still holding?"*
-— asked by `drain()` at shutdown, and by nobody else.
+— asked by `drain()` at shutdown, and by nobody else. The list is this section;
+the function that reads it is the next one.
 
 | | |
 | --- | --- |
@@ -963,6 +964,87 @@ what you read before turning the lights off.
 There is one incidental benefit: a strong reference stops Python's garbage
 collector reclaiming a task mid-`await`. That is a language detail, not the
 purpose.
+
+##### How `drain()` actually works, line by line
+
+`_in_flight` is the list. `drain()` is the function that reads it, and it is
+short enough to go through in full
+([`api/socket.py`](../backend/Analyzer/api/socket.py)):
+
+```python
+async def drain(timeout: float) -> int:
+    running = {task for task in _in_flight if not task.done()}
+    if not running:
+        return 0
+
+    logger.info("Waiting up to %.0fs for %d run(s) to finish", timeout, len(running))
+    done, pending = await asyncio.wait(running, timeout=timeout)
+    if pending:
+        logger.warning("%d run(s) did not finish in time — their answers are lost …", len(pending))
+    else:
+        logger.info("All %d in-flight run(s) finished", len(done))
+    return len(pending)
+```
+
+| The line | In plain English |
+| --- | --- |
+| `running = {…if not task.done()}` | take a snapshot of the answers still being written, right now |
+| `if not running: return 0` | nothing in hand → return immediately. **This is why a quiet pod still exits in under a second** |
+| `logger.info("Waiting up to …")` | the line you grep for. It says how many runs and how long it will give them |
+| `await asyncio.wait(running, timeout=timeout)` | **the entire mechanism.** Sit here until those tasks finish, or the clock runs out |
+| `if pending:` | some did not finish. Say so, loudly, and say what it cost |
+| *(no `task.cancel()` anywhere)* | the ones that ran out of time are **left alone**, not cancelled. The process is leaving either way, and cancelling a half-written answer cannot make it any more saved |
+| `return len(pending)` | how many answers were lost. Zero is the pass |
+
+**Where it is called from** — the shutdown half of the app's lifespan
+([`main.py`](../backend/Analyzer/main.py)):
+
+```python
+    yield                                        # ← the app serves requests here
+    await drain(settings.SHUTDOWN_DRAIN_SECONDS)
+    await leases.close()
+    await message_cache.close()
+```
+
+Everything above `yield` is startup; everything below it runs while the process
+is shutting down. By the time `drain()` is reached, new requests have already
+stopped arriving — so it is only ever waiting for work the pod was *already*
+holding, never for new work to appear.
+
+**So how does it "prevent" anything?** It does not, and this is the sentence
+that makes the whole row click:
+
+> The pod stays alive because **a function has not returned yet.**
+
+That is all. `await asyncio.wait(...)` is an ordinary await. While it is
+waiting, the lifespan's shutdown has not finished, so uvicorn has not exited, so
+the process is still running — and a process that is still running is one whose
+tasks can still finish and still write their rows to Postgres.
+
+No lock is taken. Kubernetes is not told anything. Nothing is protected. A
+coroutine is simply taking its time to return, and everything the drain achieves
+is a side effect of the process still being alive while it does.
+
+```mermaid
+flowchart TB
+  S["SIGTERM"] --> L["lifespan resumes after yield"]
+  L --> D["await drain(120)"]
+  D --> W{"anything in _in_flight?"}
+  W -->|"no"| R0["return 0 — exit in milliseconds"]
+  W -->|"yes"| A["await asyncio.wait(tasks, timeout=120)"]
+  A --> T1["tasks finish → they write their answer rows"]
+  A --> T2["timeout → log the loss, cancel nothing"]
+  T1 --> E["drain returns → lifespan ends → process exits"]
+  T2 --> E
+  classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
+  classDef good fill:#e8f6ec,stroke:#1e8449,color:#14532d
+  classDef bad fill:#fdecea,stroke:#c0392b,color:#7b1c14
+  classDef warn fill:#fff4e0,stroke:#b7791f,color:#7c4a03
+  class S,L,D,A step
+  class W warn
+  class R0,T1,E good
+  class T2 bad
+```
 
 ##### What the drain is *not*
 
