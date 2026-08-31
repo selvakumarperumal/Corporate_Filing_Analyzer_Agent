@@ -4,7 +4,7 @@ The same services `docker compose up` gives you, as Kubernetes objects, on a
 one-node cluster on your machine — but run the way
 [`docs/SCALING.md`](../../docs/SCALING.md) says they have to be run once there
 is more than one of anything: **two API replicas**, one shared vector store, one
-signing key from a Secret, a sticky ingress, and a shutdown long enough to
+signing key from a Secret, a sticky gateway, and a shutdown long enough to
 finish an answer.
 
 The model is not in here. Ollama runs on the host, exactly as it does under
@@ -32,9 +32,17 @@ steps, every command written out, plus what to test and how to break each part
 on purpose. The short version, once the cluster and images exist:
 
 ```bash
+# once per cluster: the Gateway API CRDs, and Istio to serve them
+kubectl apply -k "github.com/kubernetes-sigs/gateway-api/config/crd?ref=v1.2.1"
+istioctl install --set profile=minimal -y
+
 kubectl apply -k deploy/minikube
 kubectl -n cfa rollout status deploy/chroma      --timeout=5m
 kubectl -n cfa rollout status deploy/cfa-backend --timeout=10m
+
+# Istio provisions the data plane from the Gateway object
+kubectl -n cfa rollout status deploy/cfa-istio   --timeout=5m
+minikube tunnel                                  # leave running, needs sudo
 ```
 
 This file is the other half: what each object is, and why it is shaped the way
@@ -54,7 +62,7 @@ it is.
 | `base/chroma.yaml` | Deployment + Service + 10Gi claim | the filings, shared by every API pod |
 | `base/backend.yaml` | Deployment + Service `backend` | the API — **two replicas**, no volumes |
 | `base/frontend.yaml` | Deployment + Service | nginx and the static client |
-| `base/ingress.yaml` | Ingress `cfa` | sticky cookie, long timeouts, 64m bodies |
+| `base/gateway.yaml` | Gateway + HTTPRoute `cfa`, DestinationRule `backend-sticky` | the way in: path routing, no request timeout, sticky cookie |
 | `base/ollama.yaml` | *(optional)* Deployment + Service + 20Gi claim | the model, in-cluster |
 | `base/pdb.yaml` | *(optional)* PodDisruptionBudget | for a real cluster; it blocks drains on one node |
 | `kustomization.yaml` | — | points at `base/` |
@@ -77,7 +85,7 @@ fixed in the code; the rest are configuration, and this is that configuration.
 | --- | --- | --- |
 | #1 JWT signing key | this deployment | `cfa-secrets/jwt-secret`, generated when you create the Secret |
 | #2 Embedded vector store | code + this deployment | `CHROMA_HOST` in `base/config.yaml`, pointed at `base/chroma.yaml` |
-| #3 Handshake routing | this deployment | cookie affinity in `base/ingress.yaml`, on the path that needs it |
+| #3 Handshake routing | this deployment | `consistentHash` cookie in `base/gateway.yaml`, on the path that needs it |
 | #4 In-flight runs on rollout | code + this deployment | 180s grace, 15s `preStop`, `SHUTDOWN_DRAIN_SECONDS=120` |
 | #5 Message position race | code | a row lock in `record_message` — nothing to configure |
 | #6 Broadcasting | code, off by default | `SOCKETIO_MESSAGE_QUEUE_URL`, blank until something broadcasts |
@@ -93,7 +101,7 @@ budget here:
 
 ```
 terminationGracePeriodSeconds  180   backend.yaml — the kubelet's patience
-  preStop sleep                 15   backend.yaml — the ingress stops sending work
+  preStop sleep                 15   backend.yaml — the gateway stops sending work
   SHUTDOWN_DRAIN_SECONDS       120   config.yaml — the app waits for live answers
   UVICORN_TIMEOUT_GRACEFUL…    150   config.yaml — uvicorn's own ceiling
 ```
@@ -105,14 +113,22 @@ period with it, or the kubelet kills the wait it was there to allow.
 
 ## Four decisions worth knowing
 
-**The ingress sends `/api` and `/socket.io` straight to the backend.** Under
+**The HTTPRoute sends `/api` and `/socket.io` straight to the backend.** Under
 compose the browser only ever talks to nginx, which proxies both. Doing that
 here would put the frontend pod between the client and the sticky cookie: each
 polling request would arrive as a fresh connection through the frontend, and
 kube-proxy would pick a backend endpoint per connection — a handshake split
 across pods, which is Break #3 exactly. Routing those two prefixes at the
-ingress puts the cookie on the hop that has to stay pinned. The page and the API
+gateway puts the cookie on the hop that has to stay pinned. The page and the API
 still share one origin, so nothing becomes cross-origin.
+
+**Stickiness is a DestinationRule, not a field on the route.** Gateway API does
+have a portable way to say it — `sessionPersistence` on an HTTPRoute rule — but
+it lives in the experimental channel, which is a different set of CRDs from the
+ones installed above. Istio's `DestinationRule` is in the standard install and
+has done consistent hashing on a cookie for years, so that is what
+`base/gateway.yaml` uses. On a different controller, `sessionPersistence` is the
+field to port it to.
 
 **`enableServiceLinks: false` on every pod.** Kubernetes injects a legacy
 Docker-links variable per Service into every pod in the namespace, and the
@@ -140,7 +156,7 @@ at the top of that file first.
 
 ```bash
 # What is running
-kubectl -n cfa get pods,svc,ingress,pvc
+kubectl -n cfa get pods,svc,gateway,httproute,pvc
 
 # Follow the API
 kubectl -n cfa logs -f deploy/cfa-backend
@@ -199,8 +215,9 @@ application-level ones — is in
 | Chroma `CrashLoopBackOff`, panic on `PORT` | a Service is injecting `CHROMA_PORT=tcp://…` | `enableServiceLinks: false` — already set here; check it survived an edit |
 | Backend `CrashLoopBackOff`, connection refused | `database-url` disagrees with `cfa-postgres` | reconcile the Secret with the ConfigMap |
 | Frontend `CrashLoopBackOff` at first apply | nginx resolves `backend` at startup and the Service did not exist yet | it self-heals; `kubectl -n cfa rollout restart deploy/cfa-frontend` if impatient |
-| 404 from the ingress | no `/etc/hosts` entry, or the addon is off | `minikube addons enable ingress`; add the hosts line |
-| 413 on upload | the ingress body limit | already 64m here; raise `proxy-body-size` for larger filings |
+| 404 from the gateway | no `/etc/hosts` entry, or no tunnel | `minikube tunnel`, then add the `/etc/hosts` line |
+| `cfa.local` refuses the connection | the Gateway Service has no address | `kubectl -n cfa get gateway cfa` — `PROGRAMMED` must be True, and `minikube tunnel` must be running |
+| Gateway stuck without an address | no controller for the `istio` GatewayClass | `kubectl get gatewayclass istio`; `istioctl install --set profile=minimal -y` |
 | Everything is `Pending` | minikube has no room | `minikube stop && minikube start --cpus=4 --memory=6g` |
 
 ---

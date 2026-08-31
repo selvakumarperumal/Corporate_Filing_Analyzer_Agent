@@ -1,0 +1,130 @@
+# The way in. Gateway API, served by Istio.
+#
+# Two things have to exist in the cluster before this applies cleanly:
+#
+#     # 1. the Gateway API CRDs — not shipped with Kubernetes
+#     kubectl get crd gateways.gateway.networking.k8s.io >/dev/null 2>&1 || \
+#       kubectl apply -k "github.com/kubernetes-sigs/gateway-api/config/crd?ref=v1.2.1"
+#
+#     # 2. Istio, which provides the `istio` GatewayClass
+#     istioctl install --set profile=minimal -y
+#
+# Istio provisions the data plane itself: applying the Gateway below creates a
+# Deployment and a Service called `cfa-istio` in this namespace. Nothing here
+# has to describe that, which is the main practical difference from an Ingress.
+#
+# ── Reaching it on minikube ──────────────────────────────────────────────
+# The generated Service is type LoadBalancer, so it needs a tunnel to get an
+# address, and cfa.local has to resolve to it:
+#
+#     minikube tunnel                              # leave running
+#     echo "127.0.0.1  cfa.local" | sudo tee -a /etc/hosts
+#
+# The same string must appear in CORS_ORIGINS (config.yaml) or python-socketio
+# refuses the handshake with a 400 before any of this matters.
+#
+# ── Why /api and /socket.io skip the frontend pod ────────────────────────
+# Under compose the browser talks only to nginx, which proxies both paths to
+# the backend. That is fine for one backend and wrong for several: nginx would
+# forward each poll request through the frontend Service to the *backend*
+# Service, and kube-proxy picks an endpoint per connection. A polling handshake
+# would land on a different pod every request — docs/SCALING.md, Break #3, with
+# nothing anywhere in the path to pin it.
+#
+# Routing those two prefixes here instead puts the sticky cookie between the
+# browser and the backend pod, which is the hop that has to stay pinned. The
+# page and the API still share one origin, so nothing becomes cross-origin.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: cfa
+  labels:
+    app.kubernetes.io/part-of: corporate-filing-analyzer
+spec:
+  gatewayClassName: istio
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      hostname: cfa.local
+      allowedRoutes:
+        namespaces:
+          # Routes may only attach from this namespace. The default is the
+          # same thing said explicitly; it is here because a Gateway that
+          # accepts routes from anywhere is a different security posture and
+          # should be a deliberate choice, not a default nobody read.
+          from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: cfa
+  labels:
+    app.kubernetes.io/part-of: corporate-filing-analyzer
+spec:
+  parentRefs:
+    - name: cfa
+  hostnames:
+    - cfa.local
+  rules:
+    # Rule order is not precedence in Gateway API — the spec ranks matches, and
+    # the longest path prefix wins. So /api and /socket.io are chosen over the
+    # catch-all below whatever order they appear in, unlike an Ingress where
+    # this depended on the controller.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api
+        - path:
+            type: PathPrefix
+            value: /socket.io
+      # ── Timeouts ─────────────────────────────────────────────────────────
+      # A streamed answer has long quiet stretches, and an upload is embedded
+      # synchronously before it responds. Anything but "no timeout" cuts one of
+      # them off mid-flight. `0s` is the spec's way of disabling it; these
+      # replace the proxy-read/send-timeout annotations an Ingress needed, and
+      # mirror what frontend/nginx.conf already does one layer down.
+      timeouts:
+        request: 0s
+        backendRequest: 0s
+      backendRefs:
+        - name: backend
+          port: 8000
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: cfa-frontend
+          port: 8080
+---
+# ── Stickiness ───────────────────────────────────────────────────────────
+# With two API replicas this is what keeps a polling handshake on one pod
+# instead of splitting it across both.
+#
+# Gateway API has a portable way to say this — `sessionPersistence` on an
+# HTTPRoute rule — but it is in the experimental channel, so it needs a
+# different set of CRDs from the ones installed above. Istio's own
+# DestinationRule is in the standard install and has done this for years, so
+# that is what this uses. If you move to a controller without it, that field is
+# the thing to port to.
+#
+# `ttl` is what makes Envoy *generate* the cookie when a request arrives
+# without one — which is exactly the response header the sticky test greps for.
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: backend-sticky
+  labels:
+    app.kubernetes.io/part-of: corporate-filing-analyzer
+spec:
+  host: backend.cfa.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      # ── SCALING FIX #3 · sticky handshakes — the one fix no code can make ──
+      # Why: docs/SCALING.md Break #3 · Test: docs/TESTING-SCALING.md §6
+      consistentHash:
+        httpCookie:
+          name: cfa-sticky
+          path: /
+          ttl: 3600s

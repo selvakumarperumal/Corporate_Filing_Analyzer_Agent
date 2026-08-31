@@ -24,7 +24,7 @@ resources:
   - chroma.yaml
   - backend.yaml
   - frontend.yaml
-  - ingress.yaml
+  - gateway.yaml
 
 # Deliberately not listed above:
 #   secret.example.yaml  — a template; the real Secret is created separately

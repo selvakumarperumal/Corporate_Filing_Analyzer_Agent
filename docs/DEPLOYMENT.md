@@ -46,7 +46,7 @@ how you deploy it and how you check.
 | Vector store | embedded, on disk | shared service |
 | Postgres | one you provide | StatefulSet + claim |
 | Redis | optional | Deployment |
-| Sticky sessions | n/a | yes, at the ingress |
+| Sticky sessions | n/a | yes, at the gateway |
 | Graceful shutdown | no | yes |
 | Good for | writing code | the real thing, locally |
 | Ready in | seconds | ten minutes, mostly image builds |
@@ -62,7 +62,7 @@ this anywhere for real, this is the shape it takes.
 
 There is a `docker-compose.yml` too, and it still works — see the README's
 *Running with Docker*. It is a convenience for using the app, not a deployment:
-one API, no ingress, no stickiness, no termination budget. It is not covered
+one API, no gateway, no stickiness, no termination budget. It is not covered
 here because everything worth testing about a deployment is untestable on it.
 
 ---
@@ -173,17 +173,38 @@ minikube start --cpus=4 --memory=6g
 ```
 
 6 GB is a sensible floor with Ollama on the host: two API replicas, Postgres,
-Redis, Chroma and the ingress controller all have to fit. If the cluster already
+Redis, Chroma and Istio all have to fit. If the cluster already
 exists, minikube will not resize it — `minikube delete` first if you need to.
 
-### 2. The ingress controller
+### 2. Gateway API, and a controller for it
+
+Two installs, once per cluster. The CRDs first — Gateway API is not part of
+Kubernetes, so `Gateway` and `HTTPRoute` do not exist until these are applied:
 
 ```bash
-minikube addons enable ingress
+kubectl apply -k "github.com/kubernetes-sigs/gateway-api/config/crd?ref=v1.2.1"
 ```
 
-Without it the `Ingress` object is inert and `http://cfa.local` goes nowhere.
-This is also what terminates the sticky cookie, so it is not optional decoration.
+Then Istio, which provides the `istio` GatewayClass that serves them:
+
+```bash
+istioctl install --set profile=minimal -y
+kubectl get gatewayclass istio          # must exist before you apply the stack
+```
+
+Without both, the `Gateway` object is accepted but never programmed, and
+`http://cfa.local` goes nowhere. Istio is also what terminates the sticky
+cookie, so it is not optional decoration.
+
+Applying the stack later creates the `Gateway`, and **Istio provisions the data
+plane from it** — a `cfa-istio` Deployment and Service appear in the `cfa`
+namespace on their own. That Service is a LoadBalancer, which on minikube needs
+a tunnel to get an address:
+
+```bash
+minikube tunnel                                     # leave it running; needs sudo
+echo "127.0.0.1  cfa.local" | sudo tee -a /etc/hosts
+```
 
 ### 3. Both images, inside the cluster
 
@@ -341,7 +362,7 @@ fails, nothing else is worth running.
 
 `--origin` must be a value in `CORS_ORIGINS`, or the handshake is refused with a
 400 before anything else gets tested. `--host` sets the `Host` header, for
-reaching an ingress by IP without an `/etc/hosts` line.
+reaching the gateway by IP without an `/etc/hosts` line.
 
 ### `split.py` — do two instances agree
 
@@ -357,7 +378,7 @@ backend/Analyzer/.venv/bin/python deploy/checks/split.py \
     --a http://127.0.0.1:18001 --b http://127.0.0.1:18002
 ```
 
-One port-forward per pod, deliberately. Sent through the ingress, the upload and
+One port-forward per pod, deliberately. Sent through the gateway, the upload and
 the question land on the same pod most of the time and the check passes without
 having tested anything. It refuses to run if `--a` and `--b` are the same URL,
 for the same reason.
@@ -425,7 +446,7 @@ else in [SCALING.md](SCALING.md) — through its negative as well.
 falls back to polling, then reload. Pass: the polling requests continue. Fail: a
 connect/disconnect loop, which means the cookie is not reaching the backend —
 check that `/socket.io` still routes straight to the `backend` Service in
-`base/ingress.yaml` rather than through the frontend pod.
+`base/gateway.yaml` rather than through the frontend pod.
 
 **Rollout survival.** Ask a long question, and while it is streaming:
 
@@ -578,7 +599,8 @@ pod could be hours after the rollout everybody had stopped watching.
 | Backend stuck in `Init:0/2` or `Init:1/2` | it is waiting for Postgres or Chroma; read that init container's log |
 | `ErrImageNeverPull` | the image is not inside minikube — `minikube image build`, not a host build |
 | `CreateContainerConfigError` | `cfa-secrets` does not exist yet — step 4 |
-| 404 from the ingress | no `/etc/hosts` entry, or the addon is off |
+| 404 from the gateway | no `/etc/hosts` entry, or no `minikube tunnel` |
+| `Gateway` never becomes `PROGRAMMED` | no controller for the `istio` GatewayClass — step 2 |
 | Health is fine, every question fails | Ollama unreachable; it needs `OLLAMA_HOST=0.0.0.0` |
 | Connections refused under load | `(DB_POOL_SIZE + DB_MAX_OVERFLOW) × replicas` exceeded `max_connections` |
 

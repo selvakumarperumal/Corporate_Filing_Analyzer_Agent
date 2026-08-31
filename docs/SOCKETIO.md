@@ -224,7 +224,7 @@ protecting one of these steps.
 Four things to notice, because each becomes a production concern later:
 
 - **`/socket.io/` is a real HTTP path.** Anything that routes HTTP — nginx, an
-  ingress, a load balancer — must be told about it. That is why
+  HTTPRoute, a load balancer — must be told about it. That is why
   [frontend/nginx.conf](../frontend/nginx.conf) has a `location /socket.io/`
   block of its own.
 - **`sid` is issued in step ①.** It identifies this connection. Step ② carries
@@ -905,9 +905,11 @@ embedded synchronously and that is not fast on a local model.
 - **Cloudflare** — WebSockets work on all plans, but the 100s proxy timeout
   applies to *idle* connections. The Socket.IO heartbeat (25s default) keeps
   them alive; do not disable it.
-- **Kubernetes ingress-nginx** — the annotations
-  `nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"` and
-  `.../affinity: "cookie"` are the two you will need.
+- **Kubernetes, Gateway API** — `timeouts.request: 0s` on the HTTPRoute rule
+  that carries `/socket.io`, and cookie stickiness on the backend behind it.
+  See [SCALING.md §10](SCALING.md#10-sticky-sessions-with-gateway-api-concretely)
+  for both, and [`deploy/minikube/base/gateway.yaml`](../deploy/minikube/base/gateway.yaml)
+  for a working pair.
 
 ---
 

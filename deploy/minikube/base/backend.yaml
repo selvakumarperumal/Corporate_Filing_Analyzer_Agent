@@ -6,7 +6,7 @@
 #   the ledger    in Postgres
 #   the cache     in Redis
 #   the signing   from one Secret, so a token minted here is valid everywhere
-#   the sockets   pinned by the ingress cookie, so a connection stays put
+#   the sockets   pinned by the gateway's cookie, so a connection stays put
 #
 # What is left in a pod's memory is the compiled graph and the model clients,
 # which are rebuilt identically per pod, and the socket sessions, which are
@@ -198,7 +198,7 @@ spec:
             preStop:
               exec:
                 # Endpoint removal is asynchronous: without this pause the
-                # ingress can still be sending new connections to a pod that
+                # gateway can still be sending new connections to a pod that
                 # has already begun shutting down.
                 command: ["sh", "-c", "sleep 15"]
           resources:

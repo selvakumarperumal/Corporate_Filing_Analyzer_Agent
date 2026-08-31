@@ -44,7 +44,8 @@ data:
   # not on this list with a 400, so whatever host you type into the browser
   # must appear here or the socket never connects.
   #
-  #   http://cfa.local        the ingress (see README — needs an /etc/hosts line)
+  #   http://cfa.local        the gateway (see README — needs a tunnel and an
+  #                           /etc/hosts line)
   #   http://localhost:8080   `kubectl port-forward svc/cfa-frontend 8080:8080`
   #
   # Reaching it some other way (a raw `minikube ip`, a different port) means
@@ -59,7 +60,7 @@ data:
 
   # ── Shutdown budget ──────────────────────────────────────────────────
   # Three numbers, one budget, and they have to agree. On SIGTERM the pod
-  # sleeps 15s (preStop) so the ingress stops sending it work, the app then
+  # sleeps 15s (preStop) so the gateway stops sending it work, the app then
   # waits SHUTDOWN_DRAIN_SECONDS for answers still streaming to reach the
   # ledger, and uvicorn gives the whole thing UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN
   # — all inside terminationGracePeriodSeconds (180) or the kubelet SIGKILLs

@@ -123,12 +123,12 @@ Four things about this rig are load-bearing:
 
 ### Rig 3 — minikube, two replicas
 
-The only rig with an ingress, a kubelet and a termination budget, so the only
+The only rig with a gateway, a kubelet and a termination budget, so the only
 one that can test Break #3 and the whole of Break #4. Two commands are worth
 keeping in a scratch file, because nearly every test needs them:
 
 ```bash
-# address each pod separately — never test a split through the ingress
+# address each pod separately — never test a split through the gateway
 PODS=($(kubectl -n cfa get pods -l app.kubernetes.io/name=cfa-backend \
         -o jsonpath='{.items[*].metadata.name}'))
 kubectl -n cfa port-forward pod/${PODS[0]} 18001:8000 &
@@ -423,7 +423,7 @@ a pod that cannot reach it never serves traffic. **Yours.**
 all reach the *same* server, and a normal load balancer spreads them around.
 
 > **When it happens:** on every page load and every reconnect, once two replicas
-> sit behind one ingress. Only on the polling transport — so it can stay hidden
+> sit behind one gateway. Only on the polling transport — so it can stay hidden
 > until one user sits behind a proxy that blocks WebSocket.
 
 **How it works.** A WebSocket is not always available, so Socket.IO opens with
@@ -462,23 +462,47 @@ cookie on every later request, and all of them land on Pod A.
 
 | Setting | What it does | Default | Get it wrong and… |
 | --- | --- | --- | --- |
-| *(none in the app)* | Stickiness is an **ingress** setting, not an application one. Nothing you can change in the backend affects it. | — | the routing is already decided before the request reaches your code |
+| *(none in the app)* | Stickiness is a **gateway** setting, not an application one. Nothing you can change in the backend affects it. | — | the routing is already decided before the request reaches your code |
 | `CORS_ORIGINS` | Which origins the browser may call the API from | `["*"]` | the handshake is blocked by the browser before routing is even involved |
 
 **Where it is handled**
 
-Not in the application at all — it is four annotations in
-[`ingress.yaml`](../deploy/minikube/base/ingress.yaml):
+Not in the application at all — it is
+[`gateway.yaml`](../deploy/minikube/base/gateway.yaml). The route puts
+`/socket.io` on the hop that can be pinned:
 
 ```yaml
-nginx.ingress.kubernetes.io/affinity: "cookie"
-nginx.ingress.kubernetes.io/affinity-mode: "persistent"
-nginx.ingress.kubernetes.io/session-cookie-name: "cfa-sticky"
-nginx.ingress.kubernetes.io/session-cookie-max-age: "3600"
+kind: HTTPRoute
+spec:
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /api }
+        - path: { type: PathPrefix, value: /socket.io }
+      timeouts:
+        request: 0s          # a streamed answer has long quiet stretches
+        backendRequest: 0s
+      backendRefs:
+        - name: backend
+          port: 8000
 ```
 
-`persistent` matters during a rollout: it keeps existing clients where they are
-when the endpoint list changes, instead of rehashing everyone mid-deploy.
+…and the `DestinationRule` is what actually pins it:
+
+```yaml
+kind: DestinationRule
+spec:
+  host: backend.cfa.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      consistentHash:
+        httpCookie:
+          name: cfa-sticky
+          ttl: 3600s         # ← without ttl the cookie is honoured, never issued
+```
+
+`ttl` is the field to check first when Step 1 below finds no cookie: a first
+request arrives without one, so unless Envoy is told to *generate* it, nothing
+ever becomes sticky.
 
 Find it in the repo: `grep -rn "SCALING FIX #3" backend deploy`
 
@@ -496,7 +520,7 @@ No cookie, no stickiness. And do not test this with a WebSocket — a WebSocket
 is one long connection that cannot be split, so it passes even when polling is
 completely broken.
 
-**Fix:** cookie affinity on the ingress. **Yours.**
+**Fix:** cookie stickiness at the gateway. **Yours.**
 → [§6](#6-break-3--the-sticky-handshake)
 
 ---
@@ -982,13 +1006,13 @@ flowchart TB
 | --- | --- | --- | --- |
 | `terminationGracePeriodSeconds` | Kubernetes manifest field. Time between `SIGTERM` and `SIGKILL`. | `30` | below the drain budget, every rollout kills answers halfway and the drain is decoration |
 | `SHUTDOWN_DRAIN_SECONDS` | How long the app *wants* | `120` | keep it under the grace period, with slack — e.g. drain 120, grace 150–180 |
-| `preStop` sleep | Kubernetes manifest field. A pause **before** `SIGTERM`, so the ingress stops sending new connections to a pod that is about to go. | `15` | too short and the pod is still receiving new requests while it shuts down |
+| `preStop` sleep | Kubernetes manifest field. A pause **before** `SIGTERM`, so the gateway stops sending new connections to a pod that is about to go. | `15` | too short and the pod is still receiving new requests while it shuts down |
 
 **What this repo actually ships**, in
 [deploy/minikube/base/backend.yaml](../deploy/minikube/base/backend.yaml):
 
 ```
-preStop sleep      15s   ← the ingress stops sending here
+preStop sleep      15s   ← the gateway stops sending here
 drain              120s  ← SHUTDOWN_DRAIN_SECONDS
                    ────
 worst case         135s   <  180s terminationGracePeriodSeconds  ✅
@@ -1009,7 +1033,7 @@ spec:
     - lifecycle:
         preStop:
           exec:
-            # endpoint removal is asynchronous: without this the ingress can
+            # endpoint removal is asynchronous: without this the gateway can
             # still be sending new connections to a pod that is shutting down
             command: ["sh", "-c", "sleep 15"]
 ```
@@ -1815,7 +1839,7 @@ configuration rather than code:
 | --- | --- | --- |
 | 1 | `JWT_SECRET_KEY` — the same on every server | a Secret |
 | 2 | `CHROMA_HOST` — one shared store | a Chroma server |
-| 3 | sticky sessions | the ingress |
+| 3 | sticky sessions | the gateway |
 | 4 | `terminationGracePeriodSeconds` above the drain | the manifest |
 | 10 | `DB_POOL_SIZE` + `DB_MAX_OVERFLOW` × servers, under `max_connections` | arithmetic |
 
@@ -1832,7 +1856,7 @@ for the wrong reason.
 
 1. **Address instances directly.** Anything that compares two instances must
    reach them individually — two ports on Rig 2, two `port-forward`s on Rig 3.
-   Through a sticky ingress, both halves of a split test land on one pod and it
+   Through a sticky gateway, both halves of a split test land on one pod and it
    passes without having tested anything.
 2. **Do the negative first.** Take the setting away, watch the failure, put it
    back, watch it pass. In that order you learn what the failure *looks like*,
@@ -2040,7 +2064,7 @@ cause, which is why it is worth being able to tell them apart.
 ## 6. Break #3 — the sticky handshake
 
 **Proves:** a polling handshake stays on one instance. **Rig:** 3 only — the
-ingress is the thing under test, not the app. **Time:** five minutes.
+gateway is the thing under test, not the app. **Time:** five minutes.
 
 ### Step 1 — the cookie exists
 
@@ -2049,13 +2073,23 @@ curl -si 'http://cfa.local/socket.io/?EIO=4&transport=polling' | grep -i set-coo
 ```
 
 ```
-set-cookie: cfa-sticky=1730…; Path=/; HttpOnly
+set-cookie: cfa-sticky="a3f1c8d0…"; Max-Age=3600; Path=/
 ```
 
-Nothing there means nothing is pinned. Check the affinity annotations on the
-Ingress and — the mistake that actually happens — that `/socket.io` routes
-straight to the `backend` Service rather than through the frontend pod, which
-would put kube-proxy between the cookie and the pods.
+Envoy generates that value and quotes it — the shape differs from what an
+Ingress controller would have set, but the name is the one the `DestinationRule`
+asks for, and that is what matters.
+
+Nothing there means nothing is pinned. Check that the `DestinationRule` exists
+and carries a `ttl` — without one the cookie is honoured but never issued — and
+then the mistake that actually happens: that `/socket.io` routes straight to the
+`backend` Service rather than through the frontend pod, which would put
+kube-proxy between the cookie and the pods.
+
+```bash
+kubectl -n cfa get destinationrule backend-sticky -o yaml | grep -A4 httpCookie
+kubectl -n cfa get httproute cfa -o yaml | grep -B2 -A6 socket.io
+```
 
 ### Step 2 — the cookie is obeyed
 
@@ -2096,13 +2130,12 @@ that never issued that `sid`.
 ### The negative
 
 ```bash
-kubectl -n cfa annotate ingress cfa nginx.ingress.kubernetes.io/affinity-
+kubectl -n cfa delete destinationrule backend-sticky
 ```
 
 With polling forced, the loop starts within a few requests — and this is the one
 break whose symptom is visible without reading a log. Put it back by reapplying
-the manifest, which restores all four affinity annotations rather than the one
-you removed:
+the manifest:
 
 ```bash
 kubectl apply -k deploy/minikube
@@ -2623,7 +2656,7 @@ Tests that pass without having tested anything. Every one of these has happened.
 
 | The test | Why it passed | What to do instead |
 | --- | --- | --- |
-| Split test through the ingress | the sticky cookie sent upload and question to the same pod | address pods directly, one `port-forward` each |
+| Split test through the gateway | the sticky cookie sent upload and question to the same pod | address pods directly, one `port-forward` each |
 | Break #2 negative on Rig 2 | both processes' embedded stores are literally the same directory | second tree, or Rig 3 |
 | Token portability on one instance | there was nothing to be portable across | two instances, addressed separately |
 | Stickiness tested over WebSocket | one connection cannot split | force polling |

@@ -2,8 +2,8 @@
 #
 # The image also reverse-proxies /api and /socket.io to `backend:8000`, which
 # is what removes CORS from the picture under compose. In the cluster the
-# ingress routes those two paths to the backend Service directly instead, and
-# for a good reason — see the comment in ingress.yaml. The proxy blocks in
+# HTTPRoute sends those two paths to the backend Service directly instead, and
+# for a good reason — see the comment in gateway.yaml. The proxy blocks in
 # frontend/nginx.conf simply go unused here; nothing about the image changes.
 #
 # Stateless and replaceable: no volumes, no state, and a rolling update is

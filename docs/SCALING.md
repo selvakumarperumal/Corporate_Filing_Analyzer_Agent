@@ -10,7 +10,7 @@ The short version, before any detail:
 > broke first was the JWT signing key, the embedded vector store, and a race on
 > message positions that quietly lost answers — none of which has anything to
 > do with WebSockets. All three are fixed. What is left is deployment: one
-> shared secret, one shared store, and a sticky ingress.
+> shared secret, one shared store, and a sticky gateway.
 
 Everything below describes what breaks, why, and where it is now handled. Two
 things decide whether an instance is safe to replicate, and both are settings:
@@ -21,7 +21,7 @@ CHROMA_HOST=chroma    # one store, not one per instance
 ```
 
 [`deploy/minikube/`](../deploy/minikube/) is a working deployment with both set,
-two API replicas, and the ingress stickiness [§10](#10-sticky-sessions-on-eks-concretely)
+two API replicas, and the gateway stickiness [§10](#10-sticky-sessions-with-gateway-api-concretely)
 describes.
 
 | Where to look | For |
@@ -49,7 +49,7 @@ describes.
 8. [Break #5 — Two writers, one message position](#break-5--two-writers-one-message-position)
 9. [Break #6 — Broadcasting (not a problem *yet*)](#break-6--broadcasting-not-a-problem-yet)
 10. [Smaller things that also change](#9-smaller-things-that-also-change)
-11. [Sticky sessions on EKS, concretely](#10-sticky-sessions-on-eks-concretely)
+11. [Sticky sessions with Gateway API, concretely](#10-sticky-sessions-with-gateway-api-concretely)
 12. [The Redis client manager](#11-the-redis-client-manager)
 13. [Graceful shutdown for minute-long answers](#12-graceful-shutdown-for-minute-long-answers)
 14. [A working EKS manifest](#13-a-working-eks-manifest)
@@ -64,7 +64,7 @@ describes.
 | --- | --- | --- | --- | --- | --- |
 | 1 | **JWT signing key** | fine (random key if unset) | tokens from one pod are rejected by every other | warned at startup, not at first login | **set `JWT_SECRET_KEY`** |
 | 2 | **Chroma vector store** | fine (embedded, on disk) | a filing uploaded to pod A is invisible to pod B | `CHROMA_HOST` switches to a shared server | **run Chroma, set the host** |
-| 3 | **Socket.IO handshake** | fine | polling handshakes split across pods → reconnect loops | nothing in code can fix this | **sticky ingress** |
+| 3 | **Socket.IO handshake** | fine | polling handshakes split across pods → reconnect loops | nothing in code can fix this | **sticky gateway** |
 | 4 | **In-flight runs** | lost on restart | lost on every rollout, more often | drained on shutdown, swept on startup | grace period |
 | 5 | **Message positions** | *loses answers under concurrency* | loses them routinely | the conversation row is locked while a position is claimed | no |
 | 6 | **Schema creation** | fine | concurrent `create_all` → one pod exits | advisory lock around it | no |
@@ -390,8 +390,8 @@ you cannot see from your desk.
 
 **Two fixes, and you want the first:**
 
-1. **Sticky sessions** at the ingress — see
-   [§10](#10-sticky-sessions-on-eks-concretely). Keeps polling working.
+1. **Sticky sessions** at the gateway — see
+   [§10](#10-sticky-sessions-with-gateway-api-concretely). Keeps polling working.
 2. **WebSocket-only** — configure the client with `transports: ["websocket"]`.
    Simpler, and immune to the split, but it gives up the fallback: a corporate
    proxy that blocks upgrades leaves those users with nothing.
@@ -666,63 +666,80 @@ reopen and never a filing.
 
 ---
 
-## 10. Sticky sessions on EKS, concretely
+## 10. Sticky sessions with Gateway API, concretely
 
-### AWS Load Balancer Controller (ALB)
+Stickiness is the one break with no fix in the application: by the time a
+request reaches this code, the routing decision has already been made. So it is
+made here, in the layer in front.
+
+### The way this repo does it — Istio
+
+Two objects. The route says where traffic goes; the `DestinationRule` says that
+one client keeps going to the same pod:
 
 ```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
 metadata:
   name: cfa
-  annotations:
-    alb.ingress.kubernetes.io/scheme: internet-facing
-    # Pods, not NodePorts — required for stickiness to mean anything.
-    alb.ingress.kubernetes.io/target-type: ip
-    # The sticky cookie itself.
-    alb.ingress.kubernetes.io/target-group-attributes: >-
-      stickiness.enabled=true,
-      stickiness.type=lb_cookie,
-      stickiness.lb_cookie.duration_seconds=3600,
-      deregistration_delay.timeout_seconds=180
-    # A socket between two questions is quiet. Engine.IO pings about every 25s,
-    # so the 60s default is survivable — but leave no margin at your peril.
-    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=3600
 spec:
-  ingressClassName: alb
+  parentRefs:
+    - name: cfa
   rules:
-    - http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: cfa-backend
-                port:
-                  number: 8000
+    - matches:
+        - path: { type: PathPrefix, value: /api }
+        - path: { type: PathPrefix, value: /socket.io }
+      # A streamed answer has long quiet stretches, and an upload is embedded
+      # before it responds. `0s` disables the timeout, which is what these
+      # need — it replaces proxy-read-timeout and friends.
+      timeouts:
+        request: 0s
+        backendRequest: 0s
+      backendRefs:
+        - name: backend
+          port: 8000
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: backend-sticky
+spec:
+  host: backend.cfa.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      consistentHash:
+        httpCookie:
+          name: cfa-sticky
+          path: /
+          ttl: 3600s      # `ttl` is what makes Envoy *generate* the cookie
 ```
 
-`deregistration_delay` is the other half of
-[Break #4](#break-4--in-flight-runs-die-on-a-rollout): it keeps a draining pod
-receiving its existing connections while it finishes.
+Without `ttl` the cookie is only honoured, never issued — and a first request
+carries no cookie, so nothing would ever become sticky. It is the field to
+check first when the handshake test fails.
 
-### NGINX ingress
+### The portable way — `sessionPersistence`
+
+Gateway API has its own field for this, on an HTTPRoute rule:
 
 ```yaml
-annotations:
-  nginx.ingress.kubernetes.io/affinity: "cookie"
-  nginx.ingress.kubernetes.io/session-cookie-name: "cfa-sticky"
-  nginx.ingress.kubernetes.io/session-cookie-max-age: "3600"
-  # A streamed answer has quiet stretches; a short read timeout cuts it mid-word.
-  nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
-  nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
-  nginx.ingress.kubernetes.io/proxy-buffering: "off"
+rules:
+  - sessionPersistence:
+      sessionName: cfa-sticky
+      type: Cookie
+      absoluteTimeout: 3600s
+    backendRefs:
+      - name: backend
+        port: 8000
 ```
 
-These mirror what [`frontend/nginx.conf`](../frontend/nginx.conf) already does
-for the container-local proxy — the same three settings, one layer up.
+It is controller-independent, which is the appeal. Two caveats before you reach
+for it: it lives in Gateway API's **experimental channel**, so it needs a
+different set of CRDs from the standard install, and support varies by
+implementation — check yours rather than assuming, because a silently ignored
+field looks exactly like working stickiness until two pods are serving.
 
-### Service-level `sessionAffinity: ClientIP`
+### The fallback — Service-level `sessionAffinity`
 
 ```yaml
 spec:
@@ -732,12 +749,20 @@ spec:
       timeoutSeconds: 10800
 ```
 
-Works, but it is the weakest option: everyone behind one corporate NAT becomes
-one "client" and lands on one pod, and it does nothing when the traffic arrives
-through an ingress that has already terminated the original source IP. Use
-cookie stickiness at the ingress where you can.
+Works, and needs nothing installed. It is also the weakest option: everyone
+behind one corporate NAT becomes one "client" and lands on one pod, and it does
+nothing at all when traffic arrives through a gateway that has already
+terminated the original source IP — which is the normal case. Use a cookie
+where you can.
 
----
+### Whatever you use, the other half of a rollout
+
+A draining pod must keep receiving its **existing** connections while it
+finishes ([Break #4](#break-4--in-flight-runs-die-on-a-rollout)). Endpoint
+removal is asynchronous, so the deployment pairs the gateway with a `preStop`
+sleep on the pod — 15 seconds of "stop sending me new work" before the app's
+own drain starts. On a cloud load balancer the equivalent knob is the
+deregistration delay, and it wants to be at least as long as the drain.
 
 ## 11. The Redis client manager
 
@@ -824,7 +849,7 @@ env:
 
 ```
 terminationGracePeriodSeconds  180   the kubelet's patience; SIGKILL after this
-  preStop sleep                 15   the ingress stops sending new work
+  preStop sleep                 15   the gateway stops sending new work
   SHUTDOWN_DRAIN_SECONDS       120   the app waits for in-flight answers
   UVICORN_TIMEOUT_GRACEFUL…    150   uvicorn's own ceiling
 ```
@@ -846,7 +871,7 @@ rest of this file is.
 
 > A complete, runnable version of everything below —
 > [`deploy/minikube/`](../deploy/minikube/) — has the Chroma service, the
-> secret, the sticky ingress and the shutdown budget already wired together.
+> secret, the sticky gateway and the shutdown budget already wired together.
 > Read that first if you want the whole thing rather than the shape of it.
 
 ```yaml
@@ -946,7 +971,7 @@ five settings and a service.
 
 1. `JWT_SECRET_KEY` from a Secret, the same value everywhere.
 2. Chroma as a service with its own volume, and `CHROMA_HOST` pointing at it.
-3. Sticky sessions at the ingress, on the route that carries `/socket.io`.
+3. Sticky sessions at the gateway, on the route that carries `/socket.io`.
 4. Grace period, `preStop`, and a `SHUTDOWN_DRAIN_SECONDS` that fits inside it.
 5. Pool sizing, or PgBouncer.
 6. *Then* `replicas: 2`.

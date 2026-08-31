@@ -8,7 +8,7 @@
 # Redis for the conversation read cache.
 #
 # One API, and that is the point of it — this is a convenience for using the
-# app, not a deployment. It has no ingress, no sticky sessions and no
+# app, not a deployment. It has no gateway, no sticky sessions and no
 # termination budget, so the things that matter about running several
 # instances cannot be exercised here. docs/DEPLOYMENT.md covers the two that
 # can: one process for writing code, and minikube for the real shape.

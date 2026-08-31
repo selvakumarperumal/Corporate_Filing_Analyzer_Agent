@@ -173,7 +173,7 @@ def main() -> int:
     parser.add_argument("--origin", default="http://localhost:8080",
                         help="Origin header; must be in CORS_ORIGINS")
     parser.add_argument("--host", default="",
-                        help="Host header, when reaching an ingress by IP")
+                        help="Host header, when reaching the gateway by IP")
     parser.add_argument("--filing", default=str(DEFAULT_FILING))
     parser.add_argument("--question",
                         default="What were total revenues and the main risk factors?")
