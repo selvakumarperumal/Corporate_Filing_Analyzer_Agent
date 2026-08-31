@@ -603,71 +603,95 @@ wait really happens. → [§7](#7-break-4--the-drain-and-the-sweep)
 
 **Complaint:** *"That question from Tuesday is still thinking."*
 
-**In one sentence.** Some deaths give the server no chance to run any code at
-all, so a cleanup job at startup finds the questions those deaths abandoned and
-writes "this was interrupted" — otherwise they spin forever.
+**In one sentence.** When a server dies without warning, the question it was
+answering is left with no answer and nobody to write one — so every server, as
+it starts up, looks for those forgotten questions and writes *"this was
+interrupted"* into them.
 
 > **When it happens:** never during a normal deploy — that is the drain's job.
 > This one is for deaths with no warning: an out-of-memory kill, a node that
 > disappears, or a drain that ran out of grace period and was killed mid-way.
 
-##### Why the drain is not enough
+##### The kitchen, which is exactly this problem
 
-The drain from the row above only runs when the server is asked politely —
-`SIGTERM`. These deaths ask nothing:
+A restaurant. An order comes in and a **ticket goes up on the rail**. The chef
+cooks it. When the dish goes out, the ticket comes down.
 
-| How the server dies | Signal | Does the drain run? | Who cleans up |
-| --- | --- | --- | --- |
-| deploy, restart, scale-down | `SIGTERM` | **yes** | nobody needs to |
-| out of memory | `SIGKILL` | no | the sweep |
-| grace period expired mid-drain | `SIGKILL` | no — it was cut off | the sweep |
-| the node disappears | *nothing at all* | no | the sweep |
+Now the chef collapses mid-service.
 
-The wreckage is identical in every case: **a question row with nothing after
-it**, and nobody coming back for it.
+- The ticket is still on the rail.
+- No dish is coming — the only person who knew about it is gone.
+- The customer is still sitting there, waiting, with no idea.
 
-##### A concrete example
+A new chef starts a shift and looks at the rail. There is a ticket from **three
+hours ago**. Nothing takes three hours. Obviously abandoned — so they take it
+down and go tell the customer, *"sorry, that order was lost, please order
+again"*.
 
-Ravi asks a question at **09:15:00**.
+But there is also a ticket from **two minutes ago**, and the second chef is
+still cooking that one right now. Take that ticket down and you have just told
+a customer their food is cancelled while it is in the pan.
 
-| Clock | What happens | In the database |
+That is the whole row. Swap the words:
+
+| Kitchen | This app |
+| --- | --- |
+| a ticket goes up | the question row is saved |
+| the dish goes out, ticket comes down | the answer row is saved |
+| the chef collapses | the server is `SIGKILL`ed — no code runs, nothing is saved |
+| a ticket left on the rail | a question in the database with no answer after it |
+| new chef checks the rail at the start of a shift | **the sweep** — it runs when a server starts |
+| "nothing takes three hours" | `STALE_RUN_MINUTES` — nothing takes 30 minutes |
+| the other chef is still cooking that one | another replica is answering that question *right now* |
+
+**"Sweep" just means:** one scan for leftovers, done once, when a server starts.
+
+##### What the sweep is looking for
+
+Exactly one shape, and nothing else — **a question with nothing after it**:
+
+| seq | role | content |
 | --- | --- | --- |
-| 09:15:00 | question saved as message 7, the run starts | Q7 |
-| 09:15:10 | the pod uses too much memory; Linux sends `SIGKILL` | Q7 |
-| 09:15:10 | the process is gone — **no code ran**, nothing was saved | Q7 |
-| 09:15:11 | Kubernetes starts a replacement pod | Q7 |
-| 09:15:11 | the new pod sweeps, but Q7 is **11 seconds old** — too new to touch | Q7 |
-| 09:45:00 | Ravi's browser has long since given up. The question still shows as unanswered | Q7 |
-| the next startup after 09:45 | Q7 is now older than 30 minutes → the sweep writes the interrupted answer | Q7 + A8 *(error)* |
+| 7 | user | "summarise the risk factors" |
+| — | — | ← nothing here. No answer, no later question. |
 
-Two things in that table surprise people, and both are deliberate:
+That is it. If anything at all was written after the question, the run finished
+and the sweep ignores it.
 
-1. **The sweep is not immediate.** It runs *at startup only*, and only touches
-   questions older than `STALE_RUN_MINUTES` (30). So the pod that replaces the
-   dead one usually heals nothing — a later start does.
-2. **That delay is the point.** Read the next section for why.
+##### The one hard part: that shape has two very different causes
 
-##### The hard part — why it waits 30 minutes
+| The shape | Cause | What it needs |
+| --- | --- | --- |
+| question, nothing after it, **2 minutes old** | a server is answering it **right now** (maybe another replica) | leave it completely alone |
+| question, nothing after it, **45 minutes old** | the server answering it died | write the "interrupted" answer |
 
-A question being answered **right now, on another server** looks *exactly* the
-same as an abandoned one: a question row, no answer row yet. There is no flag
-distinguishing them, because the run only exists in another process's memory.
+**There is no flag that tells them apart.** The run lives only in some
+process's memory, and this server cannot see into another server's memory. All
+it has is the clock.
 
-Mark that one and you have faked a failure on a perfectly healthy run — while
-the analyst is watching the words arrive. That is worse than the problem being
-fixed.
+So the rule is simply: **if it is older than `STALE_RUN_MINUTES` (30), nothing
+alive could still be working on it.** No real answer takes half an hour. Below
+that age, hands off — declaring a live run dead would be worse than the problem
+being solved.
 
-| Question written | Answer row | Age | What the sweep does |
-| --- | --- | --- | --- |
-| 10:00 | none | 2 minutes | **nothing** — another server may be answering it right now |
-| 10:00 | none | 45 minutes | writes the "interrupted" row |
-| 10:00 | 10:01 | any | nothing — it finished |
+##### So when does a stuck question actually get fixed?
 
-No real run lives for 30 minutes, so anything older than that is safe to declare
-dead. Each candidate is also re-checked under the conversation's lock
-immediately before writing, in case an answer landed in the meantime.
+This surprises people, so it is worth being blunt: **the sweep does not run
+continuously, and it is usually not the replacement pod that fixes it.**
 
-##### What the analyst ends up seeing
+| Time | What happens |
+| --- | --- |
+| 09:15:00 | Ravi asks a question. Question saved. The run starts. |
+| 09:15:10 | The pod is killed for using too much memory. **No code runs.** No answer is saved. |
+| 09:15:11 | Kubernetes starts a replacement pod. It sweeps — but the question is **11 seconds old**, so it correctly leaves it alone. |
+| 09:15:11 → 09:45 | Ravi's dossier shows a question with no answer. He gives up and closes the tab. |
+| the next server start after 09:45 | The question is now over 30 minutes old → the sweep writes the interrupted answer. |
+
+So the guarantee is not "fixed immediately". It is: **no question stays
+unanswered forever, and no live run is ever falsely declared dead.** The second
+half is why the first half is slow.
+
+##### What Ravi sees at the end
 
 Instead of a spinner that never resolves, the dossier shows an answer marked as
 an error:
@@ -675,21 +699,20 @@ an error:
 > *"This run was interrupted before it finished — the server restarted while the
 > answer was being written. Ask again to get an answer."*
 
-That is the entire value of this row: **a spinner tells you nothing and can be
-waited on forever; an error tells you to ask again.**
+That is the entire value of this row. **A spinner tells you nothing and can be
+waited on forever. An error tells you to ask again.**
 
 ```mermaid
 flowchart TB
-  K["server dies with no warning<br/>SIGKILL, out of memory, lost node"] --> L["question saved, answer never saved"]
-  L --> S{"at a later startup:<br/>is it older than 30 minutes?"}
-  S -->|"no"| SKIP["leave it — it may be live on another server"]
-  S -->|"yes"| W["write the interrupted answer, marked as an error"]
-  W --> R["the analyst can ask again"]
+  K["server killed with no warning<br/>out of memory, lost node, SIGKILL"] --> L["question saved<br/>answer never saved"]
+  L --> S{"a server starts up and checks:<br/>is this question older than 30 min?"}
+  S -->|"no — someone may be<br/>answering it right now"| SKIP["leave it alone<br/>check again at the next startup"]
+  S -->|"yes — nothing takes that long"| W["write: interrupted by a restart"]
+  W --> R["the analyst sees an error<br/>and can ask again"]
   classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
   classDef bad fill:#fdecea,stroke:#c0392b,color:#7b1c14
   classDef good fill:#e8f6ec,stroke:#1e8449,color:#14532d
   classDef warn fill:#fff4e0,stroke:#b7791f,color:#7c4a03
-  classDef fix fill:#eef2ff,stroke:#4f46e5,color:#312e81
   class K,L bad
   class S warn
   class SKIP step
@@ -700,38 +723,50 @@ flowchart TB
 
 | Setting | What it does | Default | Get it wrong and… |
 | --- | --- | --- | --- |
-| `STALE_RUN_MINUTES` | How old an unanswered question must be before the sweep is allowed to touch it | `30` | too low and the sweep marks **live** runs on other servers as failed — worse than the problem. Too high and analysts stare at spinners for longer |
-| `SHUTDOWN_DRAIN_SECONDS` | The polite path from the row above | `120` | a working drain means the sweep rarely finds anything, which is the goal |
+| `STALE_RUN_MINUTES` | How old an unanswered question must be before the sweep may touch it | `30` | **too low** and the sweep declares *live* runs on other replicas dead — it writes "interrupted" while the analyst is watching the words arrive. **Too high** and stuck questions sit there longer |
+| `SHUTDOWN_DRAIN_SECONDS` | The polite path, from the row above | `120` | a working drain means the sweep rarely finds anything — which is the goal. The sweep is the safety net, not the plan |
 
 ##### Example — strand a run on purpose
 
-Kill the process the rude way, mid-answer, so nothing drains:
+**1. Kill it the rude way**, mid-answer, so nothing gets a chance to drain:
 
 ```bash
 kill -9 <uvicorn pid>
 ```
 
-The question is now stranded, but it is seconds old, so a restart will ignore
-it. Rather than waiting half an hour, **move it into the past**:
+**2. Look at the damage.** The question is there; nothing follows it:
+
+```sql
+SELECT seq, role, status FROM messages
+WHERE conversation_id = '…' ORDER BY seq;
+```
+
+**3. Age it.** The question is seconds old, so a restart would correctly ignore
+it — and you do not want to wait half an hour. Move it into the past:
 
 ```sql
 UPDATE messages SET created_at = now() - interval '45 minutes'
 WHERE conversation_id = '…' AND seq = 7;
 ```
 
-Now restart, and the startup log says:
+**4. Restart, and read the startup log:**
 
 ```
 INFO  conversations.service  Closed out 1 interrupted run(s) from a previous life
 ```
 
-Run the negative too, because it is the half that can hurt you: while instance B
-is streaming a long answer, restart instance A. B's live run must **not** be
-swept — the question should still be unanswered when A comes back, and B should
-finish it normally a moment later.
+**5. Look at the dossier.** The question now has an answer beside it, marked as
+an error, and the spinner is gone.
 
-**Fix:** close out abandoned runs at startup and leave live ones alone.
-**Handled** — that cutoff is the whole difficulty. → [§7c](#7c-the-sweep)
+**The negative — do this one too, it is the half that can hurt you.** While
+instance B is streaming a long answer, restart instance A. A sweeps on the way
+up and must **not** touch B's live run: the question should still be unanswered
+when A is back, and B should finish it normally a moment later. A sweep that
+"helps" here has corrupted a working conversation.
+
+**Fix:** at startup, close out abandoned runs — and leave live ones alone.
+**Handled** — that second half is the whole difficulty.
+→ [§7c](#7c-the-sweep)
 
 ---
 
