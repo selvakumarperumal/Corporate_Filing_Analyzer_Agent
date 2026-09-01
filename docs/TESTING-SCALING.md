@@ -1784,68 +1784,77 @@ wasting a model call, but not breaking anything.
 > two replicas are both serving it. Rare, and it costs one model call rather
 > than a wrong answer.
 
-**What folding is, with one dossier.** The ledger keeps every message forever.
-What is *sent to the model* is much smaller: the last few turns verbatim, plus
-one paragraph standing in for everything older.
+**Start with why any of this exists.** Every question is sent to the model with
+the conversation so far attached — without it, *"and the year before?"* means
+nothing. Attach **all** of it and question 40 drags 39 answers along with it:
+slow, expensive, and eventually too big to send. So the app sends the same
+fixed-size history however old the dossier is:
 
-Take a dossier where the analyst has asked 13 questions. Each question and each
-answer is one message, so the table holds 26 rows numbered `seq` 1 … 26 — and
-until something is done about it, all 26 go into every prompt.
+> **what the model is sent** = one paragraph covering the old messages
+> **+** the last 10 messages, word for word **+** the new question
 
-On the 13th answer the unsummarised count (26) finally passes
-`HISTORY_SUMMARY_THRESHOLD` (24), so a fold runs. It leaves the last
-`HISTORY_CONTEXT_MESSAGES` (10) alone and squashes everything before them:
+**Which are squashed, which are sent as they are.** A dossier with 13 questions
+asked and answered holds 26 messages — question, answer, question, answer —
+numbered `seq` 1 to 26. Ask question 14 and they split in two:
 
-| | seq | Before the fold | After the fold |
-| --- | --- | --- | --- |
-| turns 1–8 | 1–16 | 16 messages, verbatim | one paragraph, ~180 tokens |
-| turns 9–13 | 17–26 | 10 messages, verbatim | 10 messages, verbatim |
-
-and writes three columns on the `conversations` row:
-
-| Column | Was | Now | Meaning |
-| --- | --- | --- | --- |
-| `summary` | `''` | *"The analyst asked about Apple's FY24 risk factors…"* | the paragraph |
-| `summary_through_seq` | `0` | `16` | everything up to seq 16 is inside that paragraph |
-| `summary_tokens` | `0` | `180` | what it costs out of `HISTORY_CONTEXT_TOKENS` |
-
-Nothing is deleted. Rows 1–16 stay in `messages` and the analyst still scrolls
-them; they have only stopped being *sent*. The next fold waits until the
-unsummarised tail passes 24 again — turn 21, then turn 29, one fold every eight
-turns however long the dossier runs. A prompt that stops growing is the point.
-
-**What goes wrong.** Both servers are serving that dossier, and both see the
-count cross 24 within milliseconds of each other. Both start the same fold: two
-model calls, about 30 seconds each, for one result. The lease is what stops the
-second one:
-
-| t | Pod A | Pod B | `summary_through_seq` |
-| --- | --- | --- | --- |
-| 0.00s | turn 13's answer delivered — 26 unsummarised > 24 | the same, 40 ms later | `0` |
-| 0.01s | `SET cfa:lease:summary:<id> NX EX 600` → **true, folds** | the same `SET … NX` → **false, skips** | `0` |
-| ~30s | writes the summary, `through_seq = 16`, hands the lease back | — | `16` |
-
-**Why a duplicate costs money and not correctness.** Now take the lease away —
-Redis is down — and let both pods fold. Pod B started a moment later, after turn
-14 had landed, so its fold reaches seq 18 where Pod A's reaches 16; being that
-bit ahead, B also finishes first:
-
-| t | What happens at the write | `summary_through_seq` |
+| The messages | What the model is sent | Why |
 | --- | --- | --- |
-| 40s | Pod B: `18 > 0` → applied | `18` |
-| 45s | Pod A: `18 >= 16`, ours is older → **`Discarding a stale fold …`** | `18` |
+| seq 1–16, everything older | **one paragraph**, ~180 tokens: *"The analyst asked about Apple's FY24 risk factors…"* | the gist is enough for turns this old |
+| seq 17–26, the last 10 (`HISTORY_CONTEXT_MESSAGES`) | **the messages themselves, word for word** | the new question is usually about these |
+| question 14 | itself | |
 
-That number may only move **forwards**. A fold that finishes late carrying the
-shorter reach is thrown away rather than allowed to walk the summary backwards,
-so two folds still leave one correct summary — you paid for the loser, and that
-is all.
+Squashing seq 1–16 into that paragraph is the **fold**. It is its own call to
+the model, run once after an answer has been delivered — never while an analyst
+is waiting — and the paragraph is then stored, so the next several questions
+reuse it without folding again.
 
-**So the coordination here is deliberately weak.** It is a *lease* in Redis: the
-first server to claim it folds, the other skips. If Redis is missing, the lease
-says yes to everybody and you are back to the occasional duplicate — which is
-acceptable, precisely because the worst case is a wasted call. (Compare the
-startup jobs in the next row, where being wrong is *not* acceptable, and which
-therefore use a real lock in Postgres.)
+**Nothing is deleted.** All 26 rows stay in the `messages` table and the analyst
+still scrolls back through them. Folding changes what is *sent*, never what is
+*kept*.
+
+**When a fold happens.** After each answer, the app counts the messages not yet
+in the paragraph. Once that count is *more than* `HISTORY_SUMMARY_THRESHOLD`
+(24), everything except the last 10 is folded in:
+
+| After | Messages | Not yet folded | Fold? | Sent with the next question |
+| --- | --- | --- | --- | --- |
+| turn 5 | 10 | 10 | no | those 10 messages, no paragraph yet |
+| turn 12 | 24 | 24 | no — 24 is not *more than* 24 | the last 10 only; turns 1–7 are simply left out |
+| turn 13 | 26 | 26 | **yes** — seq 1–16 folded | the paragraph + seq 17–26 |
+| turn 21 | 42 | 26 | **yes** — seq 17–32 folded | the paragraph + seq 33–42 |
+
+That is the rhythm: a fold every eight turns, and a prompt that never grows. Row
+two is the part people miss — the last-10 window applies whether or not a
+paragraph exists yet, so before the first fold the older turns are not
+summarised, they are just **not sent**. The fold is what rescues them.
+
+Three columns on the `conversations` row carry the result:
+
+| Column | After the turn-13 fold | Meaning |
+| --- | --- | --- |
+| `summary` | *"The analyst asked about…"* | the paragraph itself |
+| `summary_through_seq` | `16` | everything up to seq 16 is inside it |
+| `summary_tokens` | `180` | its size, taken off the `HISTORY_CONTEXT_TOKENS` budget |
+
+**What goes wrong with two servers.** Writing that paragraph takes a model call
+of its own, about 30 seconds. Two servers serving the same dossier both see the
+count cross 24 in the same instant, and both start the same call. One paragraph,
+paid for twice.
+
+**Why the duplicate is harmless.** Every fold records how far it reached, in
+`summary_through_seq`, and that number may only move **forwards**. At write time,
+a fold that does not reach further than what is already stored is thrown away
+(`Discarding a stale fold …`). So two folds still leave one correct paragraph —
+the second write either says the same thing or is discarded. You paid for a
+model call you did not need, and that is the entire damage.
+
+**So the coordination here is deliberately weak.** It is a *lease* in Redis —
+one key, `cfa:lease:summary:<conversation id>`, claimed with `SET … NX EX 600`:
+the first server to set it folds, the second finds it taken and skips. If Redis
+is missing, the lease says yes to everybody and you are back to the occasional
+duplicate — which is acceptable, precisely because the worst case is a wasted
+call. (Compare the startup jobs in the next row, where being wrong is *not*
+acceptable, and which therefore use a real lock in Postgres.)
 
 ```mermaid
 flowchart TB
@@ -2927,23 +2936,24 @@ duplicate fold would cost a model call rather than correctness.
 
 ### What you are about to watch
 
-Production folds when more than **24** messages are unsummarised, and keeps the
-last **10** verbatim. So the first fold in a real dossier is on turn 13, and you
-are not sitting through thirteen questions to see it. The test shrinks both
-numbers together — fold after **4**, keep the last **2** — so the first fold
-lands on question 3 with the shape production has at question 13.
+Production folds once more than **24** messages are unsummarised, and keeps the
+last **10** word for word (row 12 above walks through what that means). The
+first fold in a real dossier is therefore on turn 13, and you are not asking
+thirteen questions to see one. Shrink both numbers together — fold after **4**,
+keep the last **2** — and the first fold lands on question 3 with exactly the
+shape production has at question 13.
 
 ```bash
 kubectl -n cfa set env deploy/cfa-backend \
   HISTORY_SUMMARY_THRESHOLD=4 HISTORY_CONTEXT_MESSAGES=2
 ```
 
-> **Turn both down, not just the threshold.** The fold is
-> `pending[:-HISTORY_CONTEXT_MESSAGES] or pending` — for any tail shorter than
-> `HISTORY_CONTEXT_MESSAGES` that slice is empty and the code falls back to
-> folding *everything*, leaving no verbatim tail at all. Threshold 4 with the
-> default 10 therefore tests a shape production never runs, and the log lines
-> below will not match.
+> **Turn both down, not just the threshold.** A fold squashes everything except
+> the last `HISTORY_CONTEXT_MESSAGES` messages — and when there are fewer
+> messages than that, there is nothing left to keep back, so it squashes the lot.
+> Threshold 4 with the default 10 therefore folds *every* message and leaves no
+> word-for-word tail: a shape production never runs, and the log lines below will
+> not match.
 
 ### Turn by turn, and what each one should print
 
