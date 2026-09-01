@@ -1784,19 +1784,61 @@ wasting a model call, but not breaking anything.
 > two replicas are both serving it. Rare, and it costs one model call rather
 > than a wrong answer.
 
-**What squashing is (folding).** The dossier keeps every message forever. What
-is *sent to the model* is much smaller: the last few turns, plus a summary of
-everything older. Once more than `HISTORY_SUMMARY_THRESHOLD` (24) messages are
-unsummarised, the old ones are folded into that summary.
+**What folding is, with one dossier.** The ledger keeps every message forever.
+What is *sent to the model* is much smaller: the last few turns verbatim, plus
+one paragraph standing in for everything older.
 
-**What goes wrong.** Both servers see the count cross 24 at the same instant.
-Both start a fold. Two identical model calls, about 30 seconds each, for one
-result.
+Take a dossier where the analyst has asked 13 questions. Each question and each
+answer is one message, so the table holds 26 rows numbered `seq` 1 … 26 — and
+until something is done about it, all 26 go into every prompt.
 
-**Why it costs money and not correctness.** Each fold records how far it
-summarised, in `summary_through_seq`. That number may only move **forwards** — a
-fold that finishes late carrying an older number is thrown away rather than
-applied. Two folds, one correct summary.
+On the 13th answer the unsummarised count (26) finally passes
+`HISTORY_SUMMARY_THRESHOLD` (24), so a fold runs. It leaves the last
+`HISTORY_CONTEXT_MESSAGES` (10) alone and squashes everything before them:
+
+| | seq | Before the fold | After the fold |
+| --- | --- | --- | --- |
+| turns 1–8 | 1–16 | 16 messages, verbatim | one paragraph, ~180 tokens |
+| turns 9–13 | 17–26 | 10 messages, verbatim | 10 messages, verbatim |
+
+and writes three columns on the `conversations` row:
+
+| Column | Was | Now | Meaning |
+| --- | --- | --- | --- |
+| `summary` | `''` | *"The analyst asked about Apple's FY24 risk factors…"* | the paragraph |
+| `summary_through_seq` | `0` | `16` | everything up to seq 16 is inside that paragraph |
+| `summary_tokens` | `0` | `180` | what it costs out of `HISTORY_CONTEXT_TOKENS` |
+
+Nothing is deleted. Rows 1–16 stay in `messages` and the analyst still scrolls
+them; they have only stopped being *sent*. The next fold waits until the
+unsummarised tail passes 24 again — turn 21, then turn 29, one fold every eight
+turns however long the dossier runs. A prompt that stops growing is the point.
+
+**What goes wrong.** Both servers are serving that dossier, and both see the
+count cross 24 within milliseconds of each other. Both start the same fold: two
+model calls, about 30 seconds each, for one result. The lease is what stops the
+second one:
+
+| t | Pod A | Pod B | `summary_through_seq` |
+| --- | --- | --- | --- |
+| 0.00s | turn 13's answer delivered — 26 unsummarised > 24 | the same, 40 ms later | `0` |
+| 0.01s | `SET cfa:lease:summary:<id> NX EX 600` → **true, folds** | the same `SET … NX` → **false, skips** | `0` |
+| ~30s | writes the summary, `through_seq = 16`, hands the lease back | — | `16` |
+
+**Why a duplicate costs money and not correctness.** Now take the lease away —
+Redis is down — and let both pods fold. Pod B started a moment later, after turn
+14 had landed, so its fold reaches seq 18 where Pod A's reaches 16; being that
+bit ahead, B also finishes first:
+
+| t | What happens at the write | `summary_through_seq` |
+| --- | --- | --- |
+| 40s | Pod B: `18 > 0` → applied | `18` |
+| 45s | Pod A: `18 >= 16`, ours is older → **`Discarding a stale fold …`** | `18` |
+
+That number may only move **forwards**. A fold that finishes late carrying the
+shorter reach is thrown away rather than allowed to walk the summary backwards,
+so two folds still leave one correct summary — you paid for the loser, and that
+is all.
 
 **So the coordination here is deliberately weak.** It is a *lease* in Redis: the
 first server to claim it folds, the other skips. If Redis is missing, the lease
@@ -1807,11 +1849,11 @@ therefore use a real lock in Postgres.)
 
 ```mermaid
 flowchart TB
-  T["message 24 lands — time to fold"] --> A["Pod A claims the lease — wins"]
+  T["message 26 lands — 26 unsummarised > 24"] --> A["Pod A claims the lease — wins"]
   T --> B["Pod B tries the same lease — skips"]
   A --> M["one model call, about 30s"]
-  M --> W["summary_through_seq = 20"]
-  NR["no Redis: the lease says yes to everyone"] --> D["both fold — one wasted call<br/>the later, staler result is discarded"]
+  M --> W["seq 1–16 folded<br/>summary_through_seq = 16"]
+  NR["no Redis: the lease says yes to everyone"] --> D["both fold — one wasted call<br/>the write with the shorter reach is discarded"]
   D --> W
   classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
   classDef bad fill:#fdecea,stroke:#c0392b,color:#7b1c14
@@ -1872,17 +1914,20 @@ must be correct may be built on it; that is what `db.locks` is for."*
 
 Find it in the repo: `grep -rn "SCALING FIX #12" backend deploy`
 
-**Example.** Make folds happen in minutes instead of hours:
+**Example.** Shrink the 13-question example above to a 3-question one — turn
+*both* knobs down, in the same ratio, or the fold takes a shape production never
+has (see [§11](#11-rolling-summaries-and-the-lease)):
 
 ```bash
-kubectl -n cfa set env deploy/cfa-backend HISTORY_SUMMARY_THRESHOLD=4
+kubectl -n cfa set env deploy/cfa-backend \
+  HISTORY_SUMMARY_THRESHOLD=4 HISTORY_CONTEXT_MESSAGES=2
 ```
 
-Ask six short questions in one dossier. Across **both** logs there should be
-exactly one line per crossing:
+Ask six short questions in one dossier. Folds now land on Q3 and Q5, and across
+**both** logs there should be exactly one line per fold:
 
 ```
-INFO  conversations.service  Summarised … through seq 6 (4 message(s) folded)
+INFO  conversations.service  Summarised … through seq 4 (4 message(s) folded)
 ```
 
 Now the interesting half — stop Redis, restart both, and both servers fold.
@@ -1894,7 +1939,7 @@ SELECT summary_through_seq, summary_tokens FROM conversations WHERE id = '…';
 
 It still only moves forwards. You paid for one extra model call and got a
 correct summary. That is the entire argument for using a lease here instead of a
-lock. Put the threshold back afterwards, or every dossier you touch will fold
+lock. Put both knobs back afterwards, or every dossier you touch will fold
 constantly.
 
 **Fix:** a best-effort Redis lease, plus forward-only ordering that makes a
@@ -2880,43 +2925,96 @@ session, and a handful of concurrent folds will then starve the pool.
 **Proves:** two instances do not fold the same dossier twice, and that a
 duplicate fold would cost a model call rather than correctness.
 
-Make folds happen quickly instead of after 24 messages:
+### What you are about to watch
+
+Production folds when more than **24** messages are unsummarised, and keeps the
+last **10** verbatim. So the first fold in a real dossier is on turn 13, and you
+are not sitting through thirteen questions to see it. The test shrinks both
+numbers together — fold after **4**, keep the last **2** — so the first fold
+lands on question 3 with the shape production has at question 13.
 
 ```bash
-kubectl -n cfa set env deploy/cfa-backend HISTORY_SUMMARY_THRESHOLD=4
+kubectl -n cfa set env deploy/cfa-backend \
+  HISTORY_SUMMARY_THRESHOLD=4 HISTORY_CONTEXT_MESSAGES=2
 ```
 
-Ask five or six short questions in one dossier, alternating instances if you
-have two. Every instance should have said this at startup:
+> **Turn both down, not just the threshold.** The fold is
+> `pending[:-HISTORY_CONTEXT_MESSAGES] or pending` — for any tail shorter than
+> `HISTORY_CONTEXT_MESSAGES` that slice is empty and the code falls back to
+> folding *everything*, leaving no verbatim tail at all. Threshold 4 with the
+> default 10 therefore tests a shape production never runs, and the log lines
+> below will not match.
+
+### Turn by turn, and what each one should print
+
+Ask short questions in one dossier, alternating instances if you have two. Each
+question plus its answer is two messages, and a fold is scheduled *after* the
+answer is delivered, never before it:
+
+| After | Messages | Unsummarised | > 4? | What folds | Log line |
+| --- | --- | --- | --- | --- | --- |
+| Q1 | 2 | 2 | no | — | *(nothing)* |
+| Q2 | 4 | 4 | no | — | *(nothing)* |
+| Q3 | 6 | 6 | **yes** | seq 1–4; 5–6 stay verbatim | `Summarised <id> through seq 4 (4 message(s) folded)` |
+| Q4 | 8 | 4 | no | — | *(nothing)* |
+| Q5 | 10 | 6 | **yes** | seq 5–8; 9–10 stay verbatim | `Summarised <id> through seq 8 (4 message(s) folded)` |
+
+Every instance should have said this at startup:
 
 ```
 INFO  core.leases  Cross-instance leases ready
 ```
 
-and exactly one of them should log each fold:
+and across **both** logs, exactly one instance logs each fold. That single line
+per crossing is the positive result. Two lines with the same `through seq` means
+the lease is excluding nobody — check both pods point at the same `REDIS_URL`
+*and* the same `REDIS_KEY_PREFIX`, since the key is
+`<prefix>:lease:summary:<conversation id>`.
 
-```
-INFO  conversations.service  Summarised <id> through seq 6 (4 message(s) folded)
-```
-
-**The negative:** stop Redis and restart both instances, so leases are off
-(`REDIS_URL not set` or `Redis unreachable (…) — running without leases`). Now
-both instances may fold the same dossier — and the point of the test is that
-this is *not* a correctness failure. Prove it:
+Then read the row back after Q5:
 
 ```sql
-SELECT id, message_count, summary_through_seq, summary_tokens
+SELECT message_count, summary_through_seq, summary_tokens
 FROM conversations WHERE id = '…';
 ```
 
-`summary_through_seq` must only ever move forwards. A slow fold that lands after
-a newer one is discarded rather than applied (`Discarding a stale fold …`, at
-DEBUG). Two folds cost one wasted call to the model that is already the
-bottleneck — which is why the lease is best-effort in Redis and not a lock in
-Postgres.
+```
+ message_count | summary_through_seq | summary_tokens
+            10 |                   8 |            120
+```
 
-Put the threshold back (`HISTORY_SUMMARY_THRESHOLD-`) when you are done, or
-every dossier you touch afterwards will fold constantly.
+`message_count` counts everything the ledger holds; `summary_through_seq` is how
+far into it the paragraph reaches. The gap between them (10 − 8 = 2) is the
+verbatim tail — `HISTORY_CONTEXT_MESSAGES`, as asked for.
+
+### The negative: no lease at all
+
+Stop Redis and restart both instances, so leases are off (`REDIS_URL not set`,
+or `Redis unreachable (…) — running without leases`). Ask again past a fold, and
+both instances may fold the same dossier. The point of the test is that this is
+*not* a correctness failure:
+
+| | Redis up | Redis down |
+| --- | --- | --- |
+| Instances that fold | 1 | up to 2 |
+| Model calls per crossing | 1 | 2 — **one wasted, ~30s** |
+| `summary_through_seq` afterwards | correct | **correct** |
+| Second write | never happens | `Discarding a stale fold …` (DEBUG) |
+
+Prove the last two rows with the same query. `summary_through_seq` must only
+ever move forwards: the write compares its own reach against the column and
+gives up if the column is already at least that far, so a fold that finishes
+late carrying the shorter reach is discarded rather than applied. Two folds cost
+one wasted call to the model that is already the bottleneck — which is why the
+lease is best-effort in Redis and not a lock in Postgres.
+
+**A duplicate you should still not see:** two folds from the *same* pod. Within
+one process `_summarising` dedupes, lease or no lease. If one pod logs the same
+fold twice, that is a real bug, not this row's accepted cost.
+
+Put both knobs back when you are done
+(`kubectl -n cfa set env deploy/cfa-backend HISTORY_SUMMARY_THRESHOLD- HISTORY_CONTEXT_MESSAGES-`),
+or every dossier you touch afterwards will fold constantly.
 
 ---
 
