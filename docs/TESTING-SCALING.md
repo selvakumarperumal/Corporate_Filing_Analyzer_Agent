@@ -1784,66 +1784,99 @@ wasting a model call, but not breaking anything.
 > two replicas are both serving it. Rare, and it costs one model call rather
 > than a wrong answer.
 
-**Start with why any of this exists.** Every question is sent to the model with
-the conversation so far attached — without it, *"and the year before?"* means
-nothing. Attach **all** of it and question 40 drags 39 answers along with it:
-slow, expensive, and eventually too big to send. So the app sends the same
-fixed-size history however old the dossier is:
+##### One question, start to finish
 
-> **what the model is sent** = one paragraph covering the old messages
-> **+** the last 10 messages, word for word **+** the new question
+Say the dossier already holds **24 messages** — 12 questions and their 12
+answers, numbered `seq` 1 to 24 — and nothing has been folded yet. You type
+question 13. Here is every step.
 
-**Which are squashed, which are sent as they are.** A dossier with 13 questions
-asked and answered holds 26 messages — question, answer, question, answer —
-numbered `seq` 1 to 26. Ask question 14 and they split in two:
+**Step 1 — pick the history to attach.** The model is stateless: it remembers
+nothing between questions, so whatever the app does not attach never existed.
+The app takes the **last 10 messages** (`HISTORY_CONTEXT_MESSAGES`) and the
+**summary paragraph** — which is still empty, because nothing has been folded:
 
-| The messages | What the model is sent | Why |
+| `seq` | Turns | This time it is… |
 | --- | --- | --- |
-| seq 1–16, everything older | **one paragraph**, ~180 tokens: *"The analyst asked about Apple's FY24 risk factors…"* | the gist is enough for turns this old |
-| seq 17–26, the last 10 (`HISTORY_CONTEXT_MESSAGES`) | **the messages themselves, word for word** | the new question is usually about these |
-| question 14 | itself | |
+| 1–14 | turns 1–7 | **not sent at all** — too old for the window, and no paragraph exists yet to carry them |
+| 15–24 | turns 8–12 | **sent word for word** |
+| — | — | your question 13, sent as the question |
 
-Squashing seq 1–16 into that paragraph is the **fold**. It is its own call to
-the model, run once after an answer has been delivered — never while an analyst
-is waiting — and the paragraph is then stored, so the next several questions
-reuse it without folding again.
+This is done *before* your question is written to the table, so it cannot arrive
+in the prompt twice.
 
-**Nothing is deleted.** All 26 rows stay in the `messages` table and the analyst
-still scrolls back through them. Folding changes what is *sent*, never what is
-*kept*.
+**Step 2 — build the prompt.** Three parts, in this order:
 
-**When a fold happens.** After each answer, the app counts the messages not yet
-in the paragraph. Once that count is *more than* `HISTORY_SUMMARY_THRESHOLD`
-(24), everything except the last 10 is folded in:
+```text
+[system]  the category prompt + the filing text retrieved for this question
+          ← the source of fact
 
-| After | Messages | Not yet folded | Fold? | Sent with the next question |
-| --- | --- | --- | --- | --- |
-| turn 5 | 10 | 10 | no | those 10 messages, no paragraph yet |
-| turn 12 | 24 | 24 | no — 24 is not *more than* 24 | the last 10 only; turns 1–7 are simply left out |
-| turn 13 | 26 | 26 | **yes** — seq 1–16 folded | the paragraph + seq 17–26 |
-| turn 21 | 42 | 26 | **yes** — seq 17–32 folded | the paragraph + seq 33–42 |
+[system]  Earlier in this dossier (background):
 
-That is the rhythm: a fold every eight turns, and a prompt that never grows. Row
-two is the part people miss — the last-10 window applies whether or not a
-paragraph exists yet, so before the first fold the older turns are not
-summarised, they are just **not sent**. The fold is what rescues them.
+          Summary of earlier exchanges:
+          (empty this time — nothing folded yet)
 
-Three columns on the `conversations` row carry the result:
+          Recent exchanges:
+          Analyst: <seq 15>
+          Analyzer: <seq 16>
+          … seq 17 … 23 …
+          Analyzer: <seq 24>
 
-| Column | After the turn-13 fold | Meaning |
+          Use this only to resolve what the analyst is referring to.
+          Do not treat it as evidence about the filing.
+
+[human]   question 13
+```
+
+The history goes in as **one labelled block of background**, not as real
+conversation turns, and it is explicitly not evidence — the filing is. That is
+what lets *"and the year before?"* resolve without the model answering from
+memory of the chat instead of from the filing.
+
+**Step 3 — the answer streams back**, and two rows are appended: your question
+becomes `seq 25`, the answer `seq 26`. The dossier now holds 26 messages.
+
+**Step 4 — only now does a fold run.** With the answer delivered and nobody
+waiting, the app counts what is not yet in the paragraph: 26, which is more than
+`HISTORY_SUMMARY_THRESHOLD` (24). So it squashes everything except the last 10
+into one paragraph — a second model call, about 30 seconds, in the background:
+
+| `seq` | Turns | What the fold does to it |
 | --- | --- | --- |
-| `summary` | *"The analyst asked about…"* | the paragraph itself |
-| `summary_through_seq` | `16` | everything up to seq 16 is inside it |
-| `summary_tokens` | `180` | its size, taken off the `HISTORY_CONTEXT_TOKENS` budget |
+| 1–16 | turns 1–8 | squashed into **one paragraph**, ~180 tokens |
+| 17–26 | turns 9–13 | left alone, still stored word for word |
 
-**What goes wrong with two servers.** Writing that paragraph takes a model call
-of its own, about 30 seconds. Two servers serving the same dossier both see the
-count cross 24 in the same instant, and both start the same call. One paragraph,
-paid for twice.
+and stamps three columns on the `conversations` row: `summary` (the paragraph),
+`summary_through_seq = 16` (how far it reaches), `summary_tokens = 180` (what it
+costs out of `HISTORY_CONTEXT_TOKENS`).
 
-**Why the duplicate is harmless.** Every fold records how far it reached, in
-`summary_through_seq`, and that number may only move **forwards**. At write time,
-a fold that does not reach further than what is already stored is thrown away
+**Step 5 — ask question 14 and Step 1 looks different.** Now the paragraph
+exists, so nothing is dropped:
+
+| `seq` | Turns | What the model is sent |
+| --- | --- | --- |
+| 1–16 | turns 1–8 | **the paragraph** |
+| 17–26 | turns 9–13 | **the messages, word for word** |
+| — | — | your question 14 |
+
+**Why "rolling".** The paragraph is not written once. Every time the tail passes
+24 again — turn 21, turn 29, turn 37 — the fold runs again, feeding the *old*
+paragraph plus the newly-old messages to the model and getting a new paragraph
+back. It keeps sliding forward, always covering "everything except the last 10",
+so the prompt stays the same size at question 200 as at question 14.
+
+**Nothing is ever deleted.** All 26 rows stay in the `messages` table and the
+analyst scrolls back through every one of them. Folding changes what is *sent*,
+never what is *kept*.
+
+##### The bit that breaks with two servers
+
+That fold in Step 4 is a model call of its own, and both servers serving this
+dossier reach Step 4 at the same instant. Both count 26, both start the same
+30-second call. One paragraph, paid for twice.
+
+**Why the duplicate is harmless.** Each fold records how far it reached in
+`summary_through_seq`, and that number may only move **forwards**. At write time
+a fold that reaches no further than what is already stored is thrown away
 (`Discarding a stale fold …`). So two folds still leave one correct paragraph —
 the second write either says the same thing or is discarded. You paid for a
 model call you did not need, and that is the entire damage.
@@ -1923,9 +1956,8 @@ must be correct may be built on it; that is what `db.locks` is for."*
 
 Find it in the repo: `grep -rn "SCALING FIX #12" backend deploy`
 
-**Example.** Shrink the 13-question example above to a 3-question one — turn
-*both* knobs down, in the same ratio, or the fold takes a shape production never
-has (see [§11](#11-rolling-summaries-and-the-lease)):
+**Example.** Shrink the walkthrough above from 13 questions to 3 — turn *both*
+knobs down together, or the fold takes a shape production never has (see [§11](#11-rolling-summaries-and-the-lease)):
 
 ```bash
 kubectl -n cfa set env deploy/cfa-backend \
