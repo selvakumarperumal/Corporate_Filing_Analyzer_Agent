@@ -1776,33 +1776,95 @@ connection across a model call. **Yours.** → [§10](#10-postgres-connections)
 **Complaint:** two identical "summarised" lines in the log, a minute of model
 time spent twice.
 
-**In one sentence.** Long conversations get squashed into a short summary, and
-two servers can start squashing the same conversation at the same moment —
-wasting a model call, but not breaking anything.
+**In one sentence.** A long dossier gets squashed into one short paragraph so
+the prompt stops growing — and two servers can start squashing the same dossier
+at the same moment, which wastes a model call and breaks nothing.
 
 > **When it happens:** when a long conversation crosses the fold threshold while
 > two replicas are both serving it. Rare, and it costs one model call rather
 > than a wrong answer.
 
-##### One question, start to finish
+##### Part 1 — the problem, before any of this exists
 
-Say the dossier already holds **24 messages** — 12 questions and their 12
-answers, numbered `seq` 1 to 24 — and nothing has been folded yet. You type
-question 13. Here is every step.
+**The model remembers nothing.** Every question is a fresh call with no memory
+of the last one. Whatever the app does not attach to the prompt did not happen.
 
-**Step 1 — pick the history to attach.** The model is stateless: it remembers
-nothing between questions, so whatever the app does not attach never existed.
-The app takes the **last 10 messages** (`HISTORY_CONTEXT_MESSAGES`) and the
-**summary paragraph** — which is still empty, because nothing has been folded:
+Here is a dossier mid-flight — an analyst working through Apple's FY2024 Form
+10-K:
+
+```text
+Q1  Analyst   What were total net sales in FY2024?
+A1  Analyzer  $391.0bn, up 2.0% on FY2023's $383.3bn.
+Q2  Analyst   How much of that was Services?
+A2  Analyzer  $96.2bn, 24.6% of the total, up 12.9% year over year.
+Q3  Analyst   And the year before?
+```
+
+**Q3 is four words and means nothing on its own.** The year before *what* —
+total net sales, or Services? A stateless model receiving only `"And the year
+before?"` plus the filing has no way to know. For it to answer, the app must
+re-send Q1–A2 with the question.
+
+That is why history is attached at all. And it is also the trap: **if every
+question carries every question before it, the prompt grows for as long as the
+analyst keeps working.** At roughly 20 tokens a question and 350 an answer:
+
+| At turn | History re-sent *with every question* | What the analyst notices |
+| --- | --- | --- |
+| 1 | nothing | — |
+| 5 | 4 turns ≈ 1,500 tokens | nothing |
+| 13 | 12 turns ≈ 4,400 tokens | answers a little slower |
+| 30 | 29 turns ≈ 10,700 tokens | every answer is slower and costs more |
+| 80 | 79 turns ≈ 29,200 tokens | slow, expensive, and crowding out the filing text |
+
+The last column is the real damage. The prompt also carries the retrieved filing
+text — *the actual evidence* — and that is a fixed budget. History that grows
+without limit eventually squeezes out the thing the answer is supposed to come
+from.
+
+**Two obvious fixes, and why neither works on its own:**
+
+| Idea | What it fixes | What it breaks |
+| --- | --- | --- |
+| Send the whole conversation every time | nothing is ever forgotten | the prompt grows forever — slow, expensive, and it starves the filing text |
+| Send only the last 10 messages | the prompt is bounded, permanently | at turn 40, *"and the year before?"* points at something that fell out of the window; the company, the filing and the period established at turn 1 are simply gone |
+
+**So do both.** Keep the recent turns **word for word**, because exact wording is
+what a phrase like *"and the year before?"* attaches to. Keep everything older
+as **one paragraph of facts with the wording thrown away** — which company,
+which filing, which figures were established, what has been ruled out. That
+paragraph is the rolling summary, and "folding" is the act of writing it.
+
+##### Part 2 — watch one question go through it
+
+Same dossier, now at **24 messages** — 12 questions and their 12 answers,
+numbered `seq` 1 to 24. Nothing has been folded yet. The analyst has just
+been told about the buyback — *"$110bn authorised in May 2024"* — and types
+question 13:
+
+```text
+Q13  Analyst  And how much of that has been executed?
+```
+
+Another pronoun-only question, like Q3 was. Here is every step it goes through.
+
+**Step 1 — pick the history to attach.** The app takes the **last 10 messages**
+(`HISTORY_CONTEXT_MESSAGES`) and the **summary paragraph** — which is still
+empty, because nothing has been folded:
 
 | `seq` | Turns | This time it is… |
 | --- | --- | --- |
 | 1–14 | turns 1–7 | **not sent at all** — too old for the window, and no paragraph exists yet to carry them |
-| 15–24 | turns 8–12 | **sent word for word** |
-| — | — | your question 13, sent as the question |
+| 15–24 | turns 8–12 | **sent word for word** — including the buyback answer *"that"* refers to |
+| — | — | question 13 itself, sent as the question |
 
-This is done *before* your question is written to the table, so it cannot arrive
-in the prompt twice.
+> **Yes, turns 1–7 are genuinely invisible right now.** Between turn 8 and the
+> first fold, this dossier has amnesia about its own opening. That is the price
+> of waiting until 24 unsummarised messages before spending a model call on a
+> fold — and it is exactly what Step 4 ends.
+
+This selection happens *before* the new question is written to the table, so it
+cannot arrive in the prompt twice.
 
 **Step 2 — build the prompt.** Three parts, in this order:
 
@@ -1816,23 +1878,27 @@ in the prompt twice.
           (empty this time — nothing folded yet)
 
           Recent exchanges:
-          Analyst: <seq 15>
-          Analyzer: <seq 16>
-          … seq 17 … 23 …
-          Analyzer: <seq 24>
+          Analyst: What was the effective tax rate?            ← seq 15
+          Analyzer: 24.1%, against 14.7% in FY2023 — the […]   ← seq 16
+          … seq 17 … 22 …
+          Analyst: Is there a buyback authorisation?           ← seq 23
+          Analyzer: $110bn, authorised in May 2024. […]        ← seq 24
 
           Use this only to resolve what the analyst is referring to.
           Do not treat it as evidence about the filing.
 
-[human]   question 13
+[human]   And how much of that has been executed?
 ```
+
+`seq` 23–24 is the pair that makes the question answerable. Without it, *"that"*
+has no referent and the model can only guess.
 
 The history goes in as **one labelled block of background**, not as real
 conversation turns, and it is explicitly not evidence — the filing is. That is
-what lets *"and the year before?"* resolve without the model answering from
+what lets *"and the year before?"* resolve without the model answering from its
 memory of the chat instead of from the filing.
 
-**Step 3 — the answer streams back**, and two rows are appended: your question
+**Step 3 — the answer streams back**, and two rows are appended: the question
 becomes `seq 25`, the answer `seq 26`. The dossier now holds 26 messages.
 
 **Step 4 — only now does a fold run.** With the answer delivered and nobody
@@ -1845,57 +1911,133 @@ into one paragraph — a second model call, about 30 seconds, in the background:
 | 1–16 | turns 1–8 | squashed into **one paragraph**, ~180 tokens |
 | 17–26 | turns 9–13 | left alone, still stored word for word |
 
-and stamps three columns on the `conversations` row: `summary` (the paragraph),
-`summary_through_seq = 16` (how far it reaches), `summary_tokens = 180` (what it
-costs out of `HISTORY_CONTEXT_TOKENS`).
+Sixteen messages of transcript — roughly 3,000 tokens — go in. This comes back:
 
-**Step 5 — ask question 14 and Step 1 looks different.** Now the paragraph
-exists, so nothing is dropped:
+```text
+Dossier: Apple Inc. FY2024 Form 10-K.
+Established: total net sales $391.0bn (+2.0% on FY2023 $383.3bn); Services
+$96.2bn (+12.9%, FY2023 $85.2bn); iPhone $201.2bn (-0.9%); Greater China
+$66.9bn (-7.7%), attributed to competition and channel mix, not pricing.
+Gross margin 46.2% vs 44.1%; R&D $31.4bn (+4.9%).
+Ruled out: no going-concern language, no restatement, no segment redefinition.
+Analyst is pursuing: whether the margin gain is Services mix or hardware
+pricing.
+```
 
-| `seq` | Turns | What the model is sent |
+Read that against the transcript it replaced and you can see the deal exactly:
+**every figure and finding survives, all the wording is gone.** Nobody could
+reconstruct A1's phrasing from it — but nothing an analyst established has been
+lost.
+
+The fold then stamps three columns on the `conversations` row: `summary` (the
+paragraph), `summary_through_seq = 16` (how far it reaches), `summary_tokens =
+180` (what it costs out of `HISTORY_CONTEXT_TOKENS`).
+
+**Step 5 — ask question 14, and Step 1 now looks different.** The paragraph
+exists, so nothing is dropped for being old:
+
+| `seq` | Turns | What the model is sent | Tokens |
+| --- | --- | --- | --- |
+| 1–16 | turns 1–8 | **the paragraph** | ~180 |
+| 17–20 | turns 9–10 | trimmed — the token budget ran out before them | 0 |
+| 21–26 | turns 11–13 | **the messages, word for word** | ~1,110 |
+| — | — | question 14 | ~20 |
+
+Two ceilings apply to that tail, and the second usually binds first: at most
+`HISTORY_CONTEXT_MESSAGES` (10) messages, and at most `HISTORY_CONTEXT_TOKENS`
+(1,500) tokens *including* the paragraph. With a 180-token paragraph, 1,320
+tokens of budget fits six messages of that size, not ten — the trim works
+backwards from the newest, so `seq` 21–26 go in and 17–20 fall off the far end.
+They are not lost: the next fold reaches seq 32 and folds them into the
+paragraph. **Total history in this prompt: ~1,300 tokens, and it will still be
+~1,300 tokens at question 200.**
+
+**Why "rolling".** The paragraph is not written once. Every time the unsummarised
+tail passes 24 again, the fold runs again — and it is given the *old paragraph*
+plus only the turns since, never the whole history:
+
+| Fold at | Given to the summariser | Comes back as | Now reaches |
+| --- | --- | --- | --- |
+| turn 13 | *(nothing yet)* + seq 1–16 | paragraph, ~180 tokens | seq 16 |
+| turn 21 | paragraph + seq 17–32 | a new paragraph, ~180 tokens | seq 32 |
+| turn 29 | paragraph + seq 33–48 | a new paragraph, ~180 tokens | seq 48 |
+
+Each fold costs the same as the last, and the prompt at question 200 is the same
+size as the prompt at question 14. That is the whole point:
+
+| At turn | Without folding | With folding |
 | --- | --- | --- |
-| 1–16 | turns 1–8 | **the paragraph** |
-| 17–26 | turns 9–13 | **the messages, word for word** |
-| — | — | your question 14 |
-
-**Why "rolling".** The paragraph is not written once. Every time the tail passes
-24 again — turn 21, turn 29, turn 37 — the fold runs again, feeding the *old*
-paragraph plus the newly-old messages to the model and getting a new paragraph
-back. It keeps sliding forward, always covering "everything except the last 10",
-so the prompt stays the same size at question 200 as at question 14.
+| 14 | ~4,800 tokens of history | ~1,300 |
+| 30 | ~10,700 | ~1,300 |
+| 80 | ~29,200 | ~1,300 |
 
 **Nothing is ever deleted.** All 26 rows stay in the `messages` table and the
-analyst scrolls back through every one of them. Folding changes what is *sent*,
-never what is *kept*.
+analyst scrolls back through every one of them. Folding changes what is *sent to
+the model*, never what is *kept for the human*.
 
-##### The bit that breaks with two servers
+##### Part 3 — the bit that breaks with two servers
 
-That fold in Step 4 is a model call of its own, and both servers serving this
-dossier reach Step 4 at the same instant. Both count 26, both start the same
-30-second call. One paragraph, paid for twice.
+That fold in Step 4 is a model call of its own, scheduled in the background by
+whichever pod delivered the answer. Now put two analysts on the same dossier,
+each pinned to a different pod, asking within two seconds of one another:
 
-**Why the duplicate is harmless.** Each fold records how far it reached in
-`summary_through_seq`, and that number may only move **forwards**. At write time
-a fold that reaches no further than what is already stored is thrown away
-(`Discarding a stale fold …`). So two folds still leave one correct paragraph —
-the second write either says the same thing or is discarded. You paid for a
-model call you did not need, and that is the entire damage.
+```text
+14:32:07.412  pod-a  answer to Q13 delivered — seq 25, 26 written
+14:32:07.418  pod-a  26 unsummarised > 24 → schedule fold
+14:32:07.419  pod-a  SET cfa:lease:summary:d41c… "1" NX EX 600  → OK, mine
+14:32:09.004  pod-b  answer to Q14 delivered — seq 27, 28 written
+14:32:09.010  pod-b  28 unsummarised > 24 → schedule fold
+14:32:09.011  pod-b  SET cfa:lease:summary:d41c… "1" NX EX 600  → nil, taken
+14:32:09.011  pod-b  DEBUG Another instance is already summarising d41c… — leaving it to them
+14:32:38.902  pod-a  INFO  Summarised d41c… through seq 16 (16 message(s) folded)
+```
 
-**So the coordination here is deliberately weak.** It is a *lease* in Redis —
-one key, `cfa:lease:summary:<conversation id>`, claimed with `SET … NX EX 600`:
-the first server to set it folds, the second finds it taken and skips. If Redis
-is missing, the lease says yes to everybody and you are back to the occasional
-duplicate — which is acceptable, precisely because the worst case is a wasted
-call. (Compare the startup jobs in the next row, where being wrong is *not*
-acceptable, and which therefore use a real lock in Postgres.)
+**One key is the entire mechanism.** `cfa:lease:summary:<conversation id>`,
+claimed with `SET … NX EX 600`: `NX` means *only if nobody holds it*, so the
+first pod to ask gets `OK` and folds, the second gets `nil` and walks away. `EX
+600` means it expires by itself, so a pod killed mid-fold cannot block the next
+one forever. Pod A gives it back when it finishes, rather than waiting out the
+expiry. (Within a single process the `_summarising` set already does this job —
+the lease is that same idea stretched across processes.)
+
+**Now take Redis away** and the lease says yes to everybody:
+
+```text
+14:41:02.7  pod-a  fold starts — will reach seq 16   (no Redis: everyone may fold)
+14:41:04.3  pod-b  fold starts — will reach seq 18   (no Redis: everyone may fold)
+14:41:33.1  pod-b  writes summary_through_seq 0 → 18             ← finishes first
+14:41:35.6  pod-a  DEBUG Discarding a stale fold of d41c… (already summarised through 18)
+```
+
+**Why that is harmless, and this is the important part.** Every fold records how
+far it reached in `summary_through_seq`, and that number may only move
+**forwards**. At write time a fold compares its own reach against the column and
+gives up if the column is already at least that far. Pod A's paragraph was
+correct — for seq 1–16 — but pod B's already covers 1–18, so A's is not newer,
+only later, and it is thrown away rather than allowed to walk the summary
+backwards. Either order of arrival ends at one correct paragraph:
+
+| If this one writes first | The other one | Result |
+| --- | --- | --- |
+| pod B (reach 18) | pod A's reach 16 ≤ 18 → discarded | paragraph covers seq 1–18 ✔ |
+| pod A (reach 16) | pod B's reach 18 > 16 → applied | paragraph covers seq 1–18 ✔ |
+
+**So the coordination here is deliberately weak.** The lease is
+best-effort: if Redis is missing it excludes nobody, and you are back to the
+occasional duplicate — one wasted model call, correct output. That is acceptable
+precisely because the ordering rule, not the lease, is what protects
+correctness. (Compare the startup jobs in the next row, where being wrong is
+*not* acceptable, and which therefore use a real lock in Postgres.)
 
 ```mermaid
 flowchart TB
-  T["message 26 lands — 26 unsummarised > 24"] --> A["Pod A claims the lease — wins"]
-  T --> B["Pod B tries the same lease — skips"]
+  T["Q13 answered on pod A, Q14 on pod B<br/>both cross the threshold of 24"] --> A
+  T --> B
+  A["pod A: SET … NX → OK<br/>folds seq 1–16"]
+  B["pod B: SET … NX → nil<br/>skips: 'leaving it to them'"]
   A --> M["one model call, about 30s"]
-  M --> W["seq 1–16 folded<br/>summary_through_seq = 16"]
-  NR["no Redis: the lease says yes to everyone"] --> D["both fold — one wasted call<br/>the write with the shorter reach is discarded"]
+  M --> W["summary_through_seq = 16<br/>one paragraph, paid for once"]
+  NR["no Redis: the lease says yes to everyone"] --> D["both fold — one wasted call<br/>forward-only write discards the shorter reach"]
   D --> W
   classDef step fill:#eef2f7,stroke:#64748b,color:#1f2937
   classDef bad fill:#fdecea,stroke:#c0392b,color:#7b1c14
@@ -1915,7 +2057,7 @@ flowchart TB
 | `HISTORY_SUMMARY_THRESHOLD` | Unsummarised messages tolerated before a fold | `24` | low means constant folding (useful for testing, expensive in production); high means big prompts |
 | `REDIS_URL` | Where the lease lives. Blank means no cross-server lease at all. | *(empty)* | duplicate folds become normal — wasteful, still correct |
 | `HISTORY_CONTEXT_MESSAGES` | Recent turns sent to the model alongside the summary | `10` | too few loses the thread; too many makes every call slower |
-| `HISTORY_CONTEXT_TOKENS` | Ceiling on that context | `1500` | too high and the model call slows down or truncates |
+| `HISTORY_CONTEXT_TOKENS` | Ceiling on that context, paragraph included | `1500` | too high and the model call slows down or truncates |
 
 **Worked example**
 
@@ -1926,7 +2068,7 @@ which is the argument for a best-effort lease rather than a real lock.
 | --- | --- | --- | --- |
 | 1 pod | 1 | one model call | yes |
 | 2 pods, Redis up | 1 | one model call | yes |
-| 2 pods, Redis down | up to 2 | **one wasted call**, ~30s of the model | **yes** — the later, staler fold is discarded |
+| 2 pods, Redis down | up to 2 | **one wasted call**, ~30s of the model | **yes** — the shorter reach is discarded |
 | 4 pods, Redis down | up to 4 | 3 wasted calls | yes |
 
 Compare that last column with any other row in this section. Nothing is lost and
@@ -1953,6 +2095,17 @@ async def acquire(self, name: str, seconds: int) -> bool:
 
 Note the module docstring: *"nothing here may fail a request, and nothing that
 must be correct may be built on it; that is what `db.locks` is for."*
+
+The forward-only rule that makes a duplicate safe lives at the write end of
+[`conversations/service.py`](../backend/Analyzer/conversations/service.py):
+
+```python
+if conversation.summary_through_seq >= through_seq:
+    # Someone folded at least this far while we were away. Ours is not
+    # newer, only later, so it is discarded rather than allowed to walk
+    # the summary backwards.
+    return
+```
 
 Find it in the repo: `grep -rn "SCALING FIX #12" backend deploy`
 
@@ -2965,6 +3118,12 @@ session, and a handful of concurrent folds will then starve the pool.
 
 **Proves:** two instances do not fold the same dossier twice, and that a
 duplicate fold would cost a model call rather than correctness.
+
+> **If folding itself is not yet clear, read [row 12](#12--rolling-summaries)
+> first** — it walks one question through the mechanism with real content: why
+> history has to be attached at all, what the paragraph looks like when it comes
+> back, and why two pods folding at once is a billing problem rather than a
+> correctness one. This section is only the procedure for proving it.
 
 ### What you are about to watch
 
